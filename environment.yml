@@ -1,0 +1,35 @@
+name: sat2sound
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch=2.1.*
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1
+  - numpy
+  - pandas
+  - matplotlib
+  - scipy
+  - pillow
+  - h5py
+  - pyyaml
+  - tqdm
+  - python-dateutil
+  - pip:
+      - pytorch-lightning==2.2.*
+      - transformers==4.40.*
+      - accelerate
+      - einops
+      - timm
+      - librosa
+      - torchlibrosa
+      - ruamel.yaml
+      - yacs
+      - gradio==4.44.*
+      - folium==0.17.*
+      - wandb

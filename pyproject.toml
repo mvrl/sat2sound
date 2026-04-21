@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sat2sound"
+version = "0.1.0"
+description = "Sat2Sound: unified trimodal (satellite, audio, text) contrastive learning with a shared multimodal codebook."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "utilities*", "sat2text*", "data_prep*", "demos*"]
+exclude = ["logs*", "ckpts*", "data*", ".secrets*"]
