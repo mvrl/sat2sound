@@ -8,14 +8,18 @@ import random
 from argparse import ArgumentParser
 import sys
 import warnings
+import yaml
 from src.engine import sat2soundModel
 from src.config import cfg
-torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(os.environ.get("DETECT_ANOMALY", "0") == "1")
 # os.environ["TORCH_CPP_LOG_LEVEL"]="INFO"
 # os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
 
 if not sys.warnoptions:
-    warnings.simplefilter("ignore")
+    # Suppress known-noisy UserWarnings from PyTorch Lightning and torch internals.
+    # Use PYTHONWARNINGS=default to re-enable all warnings for debugging.
+    warnings.filterwarnings("ignore", category=UserWarning, module="pytorch_lightning")
+    warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 
 os.environ["WANDB__SERVICE_WAIT"] = "300"
 
@@ -33,8 +37,27 @@ def set_seed(seed: int = 56) -> None:
     print(f"Random seed set as {seed}")
 
 
+def _apply_yaml_config(parser, argv):
+    """If --config <path> is present in argv, load YAML and use as argparse defaults.
+    CLI flags still override YAML values. Unknown keys raise to catch typos early."""
+    config_parser = ArgumentParser(add_help=False)
+    config_parser.add_argument('--config', type=str, default=None)
+    pre_args, _ = config_parser.parse_known_args(argv)
+    if pre_args.config is None:
+        return
+    with open(pre_args.config) as f:
+        cfg_dict = yaml.safe_load(f) or {}
+    valid_dests = {a.dest for a in parser._actions}
+    unknown = set(cfg_dict) - valid_dests
+    if unknown:
+        raise ValueError(f"Unknown keys in {pre_args.config}: {sorted(unknown)}")
+    parser.set_defaults(**cfg_dict)
+
+
 def get_args():
     parser = ArgumentParser(description='')
+    parser.add_argument('--config', type=str, default=None,
+                        help='Path to YAML config; values become defaults, CLI flags override.')
     #training hparams
     parser.add_argument('--num_workers', type=int, default=16)
     parser.add_argument('--limit_val_batches', type=int, default=30)
@@ -46,44 +69,33 @@ def get_args():
     
     parser.add_argument('--dataset_type', type=str, default='GeoSound',choices=['GeoSound','SoundingEarth'])
     parser.add_argument('--sat_input_size', type=int, default= 224)
-    parser.add_argument('--sat_type', type=str, default='bingmap', choices=['sentinel','bingmap','googleEarth']) 
+    parser.add_argument('--sat_type', type=str, default='bingmap', choices=['sentinel','bingmap','googleEarth'])
     parser.add_argument('--metadata_type', type=str, default='latlong_month_time_asource_tsource',help="'latlong', 'month', 'latlong_month', 'latlong_time', 'latlong_month_time','latlong_month_time_asource', 'latlong_month_time_asource_tsource', 'none'")
     parser.add_argument('--meta_droprate', type=float, default=0.5)
-    parser.add_argument('--caption_type', type=str, default='audio_image',choices=["audio_image"])
-    parser.add_argument('--img_caption_zl', type=str, default='all',choices=["all","5","1"])
-    parser.add_argument('--precomputed_mel', type=int, default=1,choices=[0,1])
-
-    parser.add_argument('--shared_codebook', type=int, default=1,choices=[0,1])#combined_modality_loss
+    parser.add_argument('--precomputed_mel', type=int, default=1,choices=[0,1],
+                        help='1 = load precomputed mel stacks from the HF mel dataset (reproducibility). '
+                             '0 = compute mel on-the-fly from the primary HF audio (no mel storage cost).')
     parser.add_argument('--combined_modality_loss', type=int, default=1,choices=[0,1])
-    parser.add_argument('--use_combined_projectors', type=int, default=0,choices=[0,1])
-    parser.add_argument('--combine_image_text', type=int, default=0,choices=[0,1])
-    parser.add_argument('--text_encoder_type', type=str, default='flant5',choices=['clap','flant5'])
-    parser.add_argument('--audio_encoder_type', type=str, default='mgaclap',choices=['clap','ast','mgaclap'])
-    parser.add_argument('--metadata_fusion', type=str, default='early',choices=['early','late'])
-    
+
     parser.add_argument('--learning_rate', type=float, default=5e-5)
     parser.add_argument('--weight_decay', type=float, default=0.2)
     parser.add_argument('--warm_up_iterations', type=int, default=5000)
     parser.add_argument('--strategy', type=str, default='ddp_find_unused_parameters_true')
-   
+
     parser.add_argument('--accelerator',type=str, default='gpu')
-    parser.add_argument('--precision',type=str, default='full',choices=['half','full'])
     parser.add_argument('--devices', type=int, default=1)
-    
+
     parser.add_argument('--project_name', type=str, default='unified_sat2sound')
     parser.add_argument('--run_name', type=str, default='debug')
     parser.add_argument('--wandb_mode', type=str, default='disabled')
-    
- 
+
+
     parser.add_argument('--fc_dim', type=int, default = 1024)
-    parser.add_argument('--text_qmap', type=int, default = 1, choices=[0,1]) #choice to use a projection module for text embeddings or not. 
     parser.add_argument('--codebook_dim', type=int, default = 1024)
     parser.add_argument('--codebook_size', type=int, default = 16000)
 
     parser.add_argument('--fdt_weight', type=float, default=1.0)
-    parser.add_argument('--jsd_weight', type=float, default=0.0)
-    parser.add_argument('--loss_weights', type=str, default='unequal',choices=['equal','unequal'])
-    
+
     parser.add_argument('--pseudo_match_alpha', type=float, default=0.1)
     
     parser.add_argument('--recall_at', type=int, default = 10) #percent
@@ -92,6 +104,7 @@ def get_args():
     parser.add_argument('--ckpt_mode',type=str, default ='hard')
 
     parser.add_argument('--satmae_ckpt_path',type=str, default=cfg.satmae_ckpt_path)
+    _apply_yaml_config(parser, sys.argv[1:])
     args = parser.parse_args()
 
     return args
@@ -109,13 +122,7 @@ if __name__ == '__main__':
         args.batch_size = 2
         args.wandb_mode = "disabled"
         args.accelerator = "cpu"
-        
-    
-    if args.precision == "half":
-        precision = 16
-    else:
-        precision = 32
-    
+
     sat2sound_model = sat2soundModel(args)
     #initialize checkpoints and loggers
     lr_logger = LearningRateMonitor(logging_interval='step')
@@ -127,7 +134,7 @@ if __name__ == '__main__':
             ModelCheckpoint(monitor='I2S_Recall', mode='max',filename='{epoch}-{step}-{I2S_Recall:.3f}',save_top_k = 3, save_last=True,save_on_train_epoch_end=False)
         ))
     ckpt_monitor3 = ((
-            ModelCheckpoint(monitor='I2St_Recall', mode='max',filename='{epoch}-{step}-{I2S_Recall:.3f}',save_top_k = 3, save_last=True,save_on_train_epoch_end=False)
+            ModelCheckpoint(monitor='I2St_Recall', mode='max',filename='{epoch}-{step}-{I2St_Recall:.3f}',save_top_k = 3, save_last=True,save_on_train_epoch_end=False)
         ))
 
     if args.mode == 'dev': 
@@ -151,6 +158,6 @@ if __name__ == '__main__':
             trainer.fit(sat2sound_model, ckpt_path=args.ckpt_path)
         elif args.ckpt_mode.lower()=='soft':
             print('Soft Checkpoint Reload')
-            checkpoint = torch.load(args.ckpt_path)
+            checkpoint = torch.load(args.ckpt_path, map_location="cpu", weights_only=False)
             sat2sound_model.load_state_dict(checkpoint['state_dict'])
             trainer.fit(sat2sound_model)

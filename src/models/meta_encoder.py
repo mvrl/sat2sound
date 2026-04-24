@@ -1,12 +1,10 @@
-import random
-
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 AUDIO_SOURCES = 4
-CAPTION_SOURCES = 3 #QWEN, PENGI, METADATA
+CAPTION_SOURCES = 3 #Qwen, Pengi, metadata
 
 meta_dim = {'latlong':4, 'month':2, 'time':2}
 
@@ -53,9 +51,11 @@ def create_mask(original_mask, dropout_rate):
         # Calculate the number of additional items to be masked
         num_items_to_mask -= len(already_masked_indices)
 
-        # Shuffle the open indices and select the required number of items to be masked
-        random.shuffle(open_to_be_masked_indices)
-        indices_to_mask = open_to_be_masked_indices[:num_items_to_mask]
+        # Shuffle open indices with torch.randperm so that dropout respects
+        # the per-worker torch seed (set by DataLoader worker_init_fn / PL seeding).
+        perm = torch.randperm(len(open_to_be_masked_indices))
+        shuffled = [open_to_be_masked_indices[i] for i in perm.tolist()]
+        indices_to_mask = shuffled[:num_items_to_mask]
 
         # Update the mask tensor by setting the selected indices to False
         updated_mask = original_mask.clone()  # Create a copy of the original mask
@@ -123,7 +123,7 @@ class metadata_projector(pl.LightningModule):
 
         if 'month' in self.metadata_type:
             month_embeddings = self.month_fc(month)
-            if month_valid == None:
+            if month_valid is None:
                 month_valid = torch.ones(month.shape[0]).bool() #all valid
             month_mask = create_mask(original_mask=month_valid, dropout_rate=self.meta_droprate).to(month_embeddings.device)
             month_embeddings = month_embeddings*month_mask.unsqueeze(1)
@@ -132,7 +132,7 @@ class metadata_projector(pl.LightningModule):
             
         if 'time' in self.metadata_type:
             time_embeddings = self.time_fc(time)
-            if time_valid == None:
+            if time_valid is None:
                 time_valid = torch.ones(time.shape[0]).bool() #all valid
             time_mask = create_mask(original_mask=time_valid, dropout_rate=self.meta_droprate).to(time_embeddings.device)
             time_embeddings = time_embeddings*time_mask.unsqueeze(1)
@@ -141,7 +141,7 @@ class metadata_projector(pl.LightningModule):
         
         meta_embeddings = torch.cat(meta_embeddings,dim=1)
         meta_masks = torch.cat(meta_masks,dim=1).to(meta_embeddings.device)
-        if eval_meta != None:
+        if eval_meta is not None:
             meta_masks = update_meta_mask(meta_masks,eval_meta)
         return meta_embeddings, meta_masks #(B,M,fc_dim), (B, M) (B=batch_size, M=types of metadata)
 

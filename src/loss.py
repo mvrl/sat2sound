@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 def recompute_matched(matched, logits, smoothness=0.0):
     """ Recompute the `matched` matrix if the smoothness value is given.
@@ -36,18 +35,3 @@ def compute_loss(similarity,pseudo_match_alpha=0.1):
     loss_pseudo = clip_loss(similarity, updated_gt_match)
     loss = loss + pseudo_match_alpha*loss_pseudo
     return loss
-
-
-def compute_jsd_loss(attention_dict):
-    """
-    Differentiable JSD loss: compares each modality's attention to the image attention.
-    """
-    def jsd(p, q, eps=1e-8):
-        p, q = p.clamp(min=eps), q.clamp(min=eps)
-        m = 0.5 * (p + q)
-        return 0.5 * (F.kl_div(p.log(), m, reduction='batchmean') +
-                      F.kl_div(q.log(), m, reduction='batchmean'))
-
-    img_att = attention_dict['att_weight_img']
-    losses = [jsd(img_att, att) for k, att in attention_dict.items() if k != 'att_weight_img']
-    return sum(losses) / len(losses)

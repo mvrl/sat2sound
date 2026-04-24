@@ -46,22 +46,31 @@ cfg = CN()
 
 cfg.bingmap_api = _load_bingmap_api_key()
 
-cfg.data_path = _env_path("SAT2SOUND_DATA_PATH", "data")
-cfg.metafiles_path = _env_path("SAT2SOUND_METAFILES_PATH", os.path.join("data", "metafiles"))
+# ``SAT2SOUND_DATA_PATH`` is the root of the GeoSound dataset tree.
+# Setting it once cascades to all sub-paths that derive from the data root.
+_GEOSOUND_ROOT = os.environ.get(
+    "SAT2SOUND_DATA_PATH",
+    "/projects/bdbk/subashk/data/data_raw/GeoSound",
+)
+
+cfg.data_path = _GEOSOUND_ROOT
+cfg.metafiles_path = _env_path(
+    "SAT2SOUND_METAFILES_PATH", os.path.join(_GEOSOUND_ROOT, "metafiles")
+)
 cfg.satmae_ckpt_path = _env_path("SATMAE_CKPT_PATH", os.path.join("ckpts", "SATMAE", "pretrain-vit-base-e199.pth"))
 
 cfg.log_dir = _env_path("SAT2SOUND_LOG_DIR", "logs")
 cfg.ignore_ids_geosound = _env_path(
     "SAT2SOUND_IGNORE_IDS_GEOSOUND",
-    os.path.join("data", "metafiles", "GeoSound", "ignore_ids_geosound.csv"),
+    os.path.join(_GEOSOUND_ROOT, "metafiles", "GeoSound", "ignore_ids_geosound.csv"),
 )
 cfg.valid_ids_SoundingEarth = _env_path(
     "SAT2SOUND_VALID_IDS_SOUNDINGEARTH",
-    os.path.join("data", "metafiles", "SoundingEarth", "valid_ids_SoundingEarth.csv"),
+    os.path.join(_GEOSOUND_ROOT, "metafiles", "SoundingEarth", "valid_ids_SoundingEarth.csv"),
 )
-cfg.mel_feats_path = _env_path(
+cfg.mel_feats_path = os.environ.get(
     "SAT2SOUND_MEL_FEATS_PATH",
-    os.path.join("data", "GeoSound_audio_mel_feats"),
+    "/projects/bdbk/subashk/data/data_raw/GeoSound_audio_mel_feats",
 )
 cfg.mgaclap_yml_path = _env_path(
     "MGACLAP_YML_PATH",
@@ -73,6 +82,16 @@ cfg.mgaclap_ckpt_path = _env_path(
 )
 
 cfg.results_json = _env_path("SAT2SOUND_RESULTS_JSON", os.path.join("logs", "Results_main.json"))
+
+# HuggingFace dataset identifiers. Override via env var to point at a fork /
+# private mirror.
+#
+# Both datasets are self-contained: they embed raw audio, satellite imagery
+# (all sources / original resolution), audio captions, LLaVA soundscape
+# captions (zoom-level specific), precomputed MGACLAP mel features, and full
+# metadata. Users select only the columns they need at load time.
+cfg.hf_geosound_id = os.environ.get("SAT2SOUND_HF_GEOSOUND_ID", "MVRL/GeoSound")
+cfg.hf_soundingearth_id = os.environ.get("SAT2SOUND_HF_SOUNDINGEARTH_ID", "MVRL/SoundingEarth")
 
 # Optional region-image downloads (used by map-based soundscape demos).
 cfg.usa_bing_images = _env_path(

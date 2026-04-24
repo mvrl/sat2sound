@@ -1,0 +1,18 @@
+# sat2text baseline: image -> text on SoundingEarth / googleEarth.
+
+run_name: SoundingEarth_i2t_baseline
+project_name: sat2text
+mode: train
+wandb_mode: online
+
+# Dataset / satellite
+dataset_type: SoundingEarth
+sat_input_size: 224
+
+# Training
+max_epochs: 20
+batch_size: 128
+num_workers: 16
+val_check_interval: 500
+limit_val_batches: 40
+warm_up_iterations: 5000

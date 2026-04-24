@@ -8,14 +8,16 @@ import random
 from argparse import ArgumentParser
 import sys
 import warnings
+import yaml
 from .engine_i2t import sat2textModel
 from src.config import cfg
-torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(os.environ.get("DETECT_ANOMALY", "0") == "1")
 # os.environ["TORCH_CPP_LOG_LEVEL"]="INFO"
 # os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
 
 if not sys.warnoptions:
-    warnings.simplefilter("ignore")
+    warnings.filterwarnings("ignore", category=UserWarning, module="pytorch_lightning")
+    warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 
 os.environ["WANDB__SERVICE_WAIT"] = "300"
 
@@ -33,8 +35,27 @@ def set_seed(seed: int = 56) -> None:
     print(f"Random seed set as {seed}")
 
 
+def _apply_yaml_config(parser, argv):
+    """If --config <path> is present in argv, load YAML and use as argparse defaults.
+    CLI flags still override YAML values. Unknown keys raise to catch typos early."""
+    config_parser = ArgumentParser(add_help=False)
+    config_parser.add_argument('--config', type=str, default=None)
+    pre_args, _ = config_parser.parse_known_args(argv)
+    if pre_args.config is None:
+        return
+    with open(pre_args.config) as f:
+        cfg_dict = yaml.safe_load(f) or {}
+    valid_dests = {a.dest for a in parser._actions}
+    unknown = set(cfg_dict) - valid_dests
+    if unknown:
+        raise ValueError(f"Unknown keys in {pre_args.config}: {sorted(unknown)}")
+    parser.set_defaults(**cfg_dict)
+
+
 def get_args():
     parser = ArgumentParser(description='')
+    parser.add_argument('--config', type=str, default=None,
+                        help='Path to YAML config; values become defaults, CLI flags override.')
     #training hparams
     parser.add_argument('--num_workers', type=int, default=1)
     parser.add_argument('--limit_val_batches', type=int, default=100)
@@ -46,13 +67,10 @@ def get_args():
     
     parser.add_argument('--dataset_type', type=str, default='GeoSound_bingmap',choices=['GeoSound_sentinel','GeoSound_bingmap', 'SoundingEarth'])
     parser.add_argument('--sat_input_size', type=int, default= 224)
-    
+
     parser.add_argument('--sat_type', type=str, default='bingmap', choices=['sentinel','bingmap','googleEarth'])
-    parser.add_argument('--caption_type', type=str, default='image', choices=['image','audio'])  
-    parser.add_argument('--sat_scale', type=str, default='multi',choices=["single","multi"])
-    
+
     parser.add_argument('--fc_dim', type=int, default = 1024)
-    parser.add_argument('--text_qmap', type=int, default = 1, choices=[0,1]) #choice to use a projection module for text embeddings or not. 
     parser.add_argument('--codebook_dim', type=int, default = 1024)
     parser.add_argument('--codebook_size', type=int, default = 16000)
 
@@ -60,9 +78,8 @@ def get_args():
     parser.add_argument('--weight_decay', type=float, default=0.2)
     parser.add_argument('--warm_up_iterations', type=int, default=5000)
     parser.add_argument('--strategy', type=str, default='auto')
-   
+
     parser.add_argument('--accelerator',type=str, default='gpu')
-    parser.add_argument('--precision',type=str, default='full',choices=['half','full'])
     parser.add_argument('--devices', type=int, default=1)
     
     parser.add_argument('--project_name', type=str, default='sat2text_fdt')
@@ -76,6 +93,7 @@ def get_args():
     parser.add_argument('--ckpt_path',type=str, default ='none')
     parser.add_argument('--ckpt_mode',type=str, default ='hard')
 
+    _apply_yaml_config(parser, sys.argv[1:])
     args = parser.parse_args()
 
     return args
@@ -101,7 +119,7 @@ if __name__ == '__main__':
         args.sat_type = args.dataset_type.split("_")[1]
     
     args.satmae_ckpt_path = cfg.satmae_ckpt_path
-    #initliaze model
+    #initialize model
     sat2text_model = sat2textModel(args)
     #initialize checkpoints and loggers
     lr_logger = LearningRateMonitor(logging_interval='step')
@@ -135,6 +153,6 @@ if __name__ == '__main__':
             trainer.fit(sat2text_model, ckpt_path=args.ckpt_path)
         elif args.ckpt_mode.lower()=='soft':
             print('Soft Checkpoint Reload')
-            checkpoint = torch.load(args.ckpt_path)
+            checkpoint = torch.load(args.ckpt_path, map_location="cpu", weights_only=False)
             sat2text_model.load_state_dict(checkpoint['state_dict'])
             trainer.fit(sat2text_model)

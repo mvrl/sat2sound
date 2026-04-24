@@ -18,10 +18,7 @@ class SatMetaEncoder_early(pl.LightningModule):
                     audio_source=None, caption_source=None, latlong=None, time= None, month = None, 
                     time_valid=None, month_valid=None, eval_meta=None):
         
-        device = sat_embeddings.device
-        token_embeddings = sat_embeddings## Assume shape: (B, N, d)
-
-        B, N, d = token_embeddings.size()
+        token_embeddings = sat_embeddings
 
         if self.metadata_type == "none":
             return token_embeddings

@@ -9,6 +9,12 @@ description = "Sat2Sound: unified trimodal (satellite, audio, text) contrastive 
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
+# NOTE: ML runtime dependencies (torch, torchvision, pytorch-lightning, transformers,
+# timm, etc.) are intentionally NOT listed here because they require conda for
+# correct CUDA/driver matching. Install via:
+#   conda env create -f environment.yml
+# After that, install this package in editable mode:
+#   pip install -e .
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -1,7 +1,7 @@
 """MGACLAP mel-feature extraction helpers.
 
 These functions are used both at runtime (by the dataloader when
-``--precomputed_mel 0``) and offline (by ``data_prep.compute_mel_features_mgaclap``
+``--precomputed_mel 0``) and offline (by ``data_prep.audio_feats_mgaclap``
 to cache features to disk).
 
 The AST and CLAP feature-extraction variants that lived alongside this file in

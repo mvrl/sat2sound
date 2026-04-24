@@ -71,9 +71,10 @@ def load_api_key(file_path):
 
 
 def load_model(ckpt_path, device):
-    pretrained_ckpt = torch.load(ckpt_path, map_location=device)
+    pretrained_ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     hparams = pretrained_ckpt["hyper_parameters"]
     hparams.setdefault("jsd_weight", 0)
+    hparams.setdefault("precision", "full")
     hparams["meta_droprate"] = 0.0
     hparams["mode"] = "evaluate"
     model = sat2soundModel(Namespace(**hparams)).to(device)
@@ -87,9 +88,15 @@ def load_model(ckpt_path, device):
 def download_satellite_tile(lat, lon, api_key, out_file, zoom=18, size_px=1500):
     url = (
         "http://dev.virtualearth.net/REST/v1/Imagery/Map/Aerial/"
-        f"{lat},{lon}/{zoom}?mapSize={size_px},{size_px}&key={api_key}"
+        f"{float(lat)},{float(lon)}/{zoom}?mapSize={size_px},{size_px}&key={api_key}"
     )
-    urllib.request.urlretrieve(url, out_file)
+    try:
+        urllib.request.urlretrieve(url, out_file)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to download satellite tile for ({lat}, {lon}): {exc}. "
+            "Check your Bing Maps API key and network connection."
+        ) from exc
 
 
 def make_llava_caption(image_path, device):
@@ -108,7 +115,9 @@ def make_llava_caption(image_path, device):
     image = Image.open(image_path)
     inputs = processor(images=image, text=LLAVA_PROMPT, return_tensors="pt").to(device, torch.float16)
     out = model.generate(**inputs, max_new_tokens=77, do_sample=False)
-    return processor.decode(out[0], skip_special_tokens=True).split("ASSISTANT: ")[1]
+    decoded = processor.decode(out[0], skip_special_tokens=True)
+    parts = decoded.split("ASSISTANT: ")
+    return parts[1] if len(parts) > 1 else decoded
 
 
 def prepare_batch(image_path, text_prompt, hparams, tokenizer, device, zoom_level, lat, lon):
@@ -126,16 +135,11 @@ def prepare_batch(image_path, text_prompt, hparams, tokenizer, device, zoom_leve
         truncation=True,
         return_tensors="pt",
     )
-    text_patch_embeds, text_boolean_mask = prepare_flant5_text_embeds(text_input, device, hparams.precision)
-    pad_mask = torch.where(
-        text_boolean_mask == 1,
-        torch.tensor(0.0, device=device),
-        torch.tensor(float("-inf"), device=device),
-    )
+    text_patch_embeds, text_boolean_mask = prepare_flant5_text_embeds(text_input, device)
 
     metadata = {
         "audio_source": None, "caption_source": None,
-        "sat_zoom_level": torch.tensor(zoom_level).long(),
+        "sat_zoom_level": [zoom_level],
         "latlong": None, "time": None, "month": None,
         "time_valid": None, "month_valid": None,
     }
@@ -171,7 +175,6 @@ def prepare_batch(image_path, text_prompt, hparams, tokenizer, device, zoom_leve
         "sat": image_tensor,
         "sat_zoom_level": metadata["sat_zoom_level"],
         "text_input": {"patch_embeds": text_patch_embeds, "boolean_mask": text_boolean_mask},
-        "pad_mask": pad_mask,
         "latlong": metadata["latlong"],
         "audio_source": metadata["audio_source"],
         "caption_source": metadata["caption_source"],
@@ -182,7 +185,7 @@ def prepare_batch(image_path, text_prompt, hparams, tokenizer, device, zoom_leve
     }, text_input.input_ids
 
 
-def compute_heatmap(model, hparams, batch, words_list, sat_type, device):
+def compute_heatmap(model, hparams, batch, sat_type, device):
     sat_token_embeddings = model.satmae_backbone(
         batch["sat"], zoom_level=batch["sat_zoom_level"], sat_type=sat_type
     )
@@ -301,7 +304,6 @@ def build_coord_picker_map():
         """
     ))
     map_.add_child(folium.LatLngPopup())
-    plugins.LocateControl(auto_start=False).add_to(map_)
     return map_._repr_html_()
 
 
@@ -342,7 +344,7 @@ def main():
             int(zoom_level), float(latitude), float(longitude),
         )
         att_weight_img, att_weight_txt = compute_heatmap(
-            model, hparams, batch, words_list, sat_type="bingmap", device=device,
+            model, hparams, batch, sat_type="bingmap", device=device,
         )
         overlay = render_overlay(
             tile_path, att_weight_txt, att_weight_img, text_input_ids,

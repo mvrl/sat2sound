@@ -6,21 +6,30 @@ import torch.nn as nn
 from transformers import AutoTokenizer, T5EncoderModel
 
 from src.loss import compute_loss
-from src.metrics import get_retrevial_metrics
+from src.metrics import get_retrieval_metrics, recall_key
 from src.models.FDT.fdt_model import FDT
 from src.models.sat_encoder import SatMAE_backbone
 
 from .dataloader_i2t import Dataset_soundscape
 
 def l2normalize(batch_embeddings):
-    return batch_embeddings/batch_embeddings.norm(p=2,dim=-1, keepdim=True)
+    return batch_embeddings / (batch_embeddings.norm(p=2, dim=-1, keepdim=True) + 1e-8)
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
-text_encoder = T5EncoderModel.from_pretrained("google/flan-t5-large").to(device)
+_tokenizer = None
+_text_encoder = None
+
+
+def _get_text_encoder():
+    global _tokenizer, _text_encoder
+    if _tokenizer is None:
+        _tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
+        _text_encoder = T5EncoderModel.from_pretrained("google/flan-t5-large").to(device)
+    return _tokenizer, _text_encoder
 
 def encode_text(prompt):
+    tokenizer, text_encoder = _get_text_encoder()
     device = text_encoder.device
     batch = tokenizer(
         prompt, max_length=tokenizer.model_max_length, padding=True, truncation=True, return_tensors="pt"
@@ -35,18 +44,15 @@ def encode_text(prompt):
     boolean_encoder_mask = (attention_mask == 1).to(device)
     return encoder_hidden_states, boolean_encoder_mask
 
-def get_text_embeds(prompts,precision="full"):
+def get_text_embeds(prompts):
     prompt_embeds, boolean_prompt_mask = encode_text(prompts)
-    if precision == "full":
-        return prompt_embeds.to(device), boolean_prompt_mask
-    else:
-        return prompt_embeds.to(torch.float16).to(device), boolean_prompt_mask
+    return prompt_embeds, boolean_prompt_mask
 
 
 class sat2textModel(pl.LightningModule):
     def __init__(self, hparams):
 
-        #save paramaters
+        #save parameters
         super().__init__()
         #save initialized hyperparameters
         self.save_hyperparameters(hparams)
@@ -58,13 +64,11 @@ class sat2textModel(pl.LightningModule):
         raw_audio_ft_dim = 768
         raw_txt_ft_dim=1024
        
-        self.fdt = FDT(sd_num=self.hparams.codebook_size, sd_dim=self.hparams.codebook_dim, raw_img_ft_dim=self.hparams.fc_dim, raw_audio_ft_dim=raw_audio_ft_dim, raw_txt_ft_dim=raw_txt_ft_dim, text_qmap=bool(self.hparams.text_qmap),shared_codebook=False).to(self.device)
-        
-        self.logit_scale_it = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        self.fdt = FDT(sd_num=self.hparams.codebook_size, sd_dim=self.hparams.codebook_dim, raw_img_ft_dim=self.hparams.fc_dim, raw_audio_ft_dim=raw_audio_ft_dim, raw_txt_ft_dim=raw_txt_ft_dim, text_qmap=True, shared_codebook=False).to(self.device)
+
         self.logit_scale_fdt = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
         self.automatic_optimization = False
-        self.scaler = torch.cuda.amp.GradScaler() if self.hparams.precision == 'half' else None
 
     def prepare_batch(self,batch):
         #For some reason input is not automatically casted into the cuda device, so this hack for now.
@@ -76,11 +80,11 @@ class sat2textModel(pl.LightningModule):
                     for i in item.keys():
                         batch[k][i] = batch[k][i].to(self.device)
                 else:
-                    if item != None:
+                    if item is not None:
                         batch[k] = batch[k].to(self.device)
 
         #llava_caption_input
-        llava_caption_patch_embeds, llava_caption_boolean_mask = get_text_embeds(batch['llava_caption'], precision=self.hparams.precision)
+        llava_caption_patch_embeds, llava_caption_boolean_mask = get_text_embeds(batch['llava_caption'])
         batch['llava_caption_input'] = {'patch_embeds':llava_caption_patch_embeds,'boolean_mask':llava_caption_boolean_mask}
 
         return batch
@@ -88,15 +92,13 @@ class sat2textModel(pl.LightningModule):
 
     def get_embeds(self,batch):
 
-        sd_img_ft, sd_txt_ft = None, None
-        
-        sat_token_embeddings = self.satmae_backbone(batch['sat'],zoom_level=batch['sat_zoom_level'], sat_type=self.hparams.sat_type)## Assume shape: (B, N, d)
+        sat_token_embeddings = self.satmae_backbone(batch['sat'],zoom_level=batch['sat_zoom_level'], sat_type=self.hparams.sat_type)
             
-        att_weight_img, sd_img_ft, sd = self.fdt.extract_img_sd_ft(sat_token_embeddings,return_token_att=False)
+        _, sd_img_ft, _ = self.fdt.extract_img_sd_ft(sat_token_embeddings,return_token_att=False)
 
         text_patch_embeds, text_boolean_mask = batch['llava_caption_input']['patch_embeds'], batch['llava_caption_input']['boolean_mask']
         pad_mask = torch.where(text_boolean_mask==1, torch.tensor(0.0).to(self.device), torch.tensor(float('-inf')).to(self.device))
-        att_weight_txt, sd_txt_ft, sd = self.fdt.extract_txt_sd_ft(text_patch_embeds,pad_mask=pad_mask,return_token_att=False) # sd_txt_ft: #(B,1024)
+        _, sd_txt_ft, _ = self.fdt.extract_txt_sd_ft(text_patch_embeds,pad_mask=pad_mask,return_token_att=False)
 
                  
         return {
@@ -130,36 +132,23 @@ class sat2textModel(pl.LightningModule):
 
     def training_step(self, batch):
         batch = self.prepare_batch(batch)
-        
+
         optimizer = self.optimizers()
         optimizer.zero_grad()
-        
-        if self.hparams.precision == 'half':
-            with torch.cuda.amp.autocast():
-                outputs = self.shared_step(batch, train=True)
-                loss = outputs['loss_dict']['loss']
-            
-            self.manual_backward(self.scaler.scale(loss))
-            self.scaler.step(optimizer)
-            self.scaler.update()
-        else:
-            outputs = self.shared_step(batch, train=True)
-            loss = outputs['loss_dict']['loss']
-            self.manual_backward(loss)
-            optimizer.step()
-          
-        self.scheduler.step() 
+
+        outputs = self.shared_step(batch, train=True)
+        loss = outputs['loss_dict']['loss']
+        self.manual_backward(loss)
+        self.clip_gradients(optimizer, gradient_clip_val=0.5, gradient_clip_algorithm="norm")
+        optimizer.step()
+
+        self.scheduler.step()
         self.log('train_loss', outputs['loss_dict']['loss'], sync_dist=True, batch_size=self.hparams.batch_size, prog_bar=True)
-        # if torch.isnan(loss):
         return outputs['loss_dict']['loss']
         
     def validation_step(self, batch, batch_idx):
         batch = self.prepare_batch(batch)
-        if self.hparams.precision == 'half':
-            with torch.cuda.amp.autocast():
-                outputs = self.shared_step(batch,train=False)
-        else:
-            outputs = self.shared_step(batch,train=False)
+        outputs = self.shared_step(batch,train=False)
         val_loss = outputs['loss_dict']
         self.log('val_loss', val_loss['loss'].detach(), sync_dist=True, batch_size=self.hparams.batch_size, prog_bar=True)
         
@@ -185,13 +174,13 @@ class sat2textModel(pl.LightningModule):
         
         R_k = self.hparams.recall_at/100*sat_embeddings.shape[0] # Validation with Recall@
         
-        retrieval_results_I2T = get_retrevial_metrics(modality1_emb=sat_embeddings, modality2_emb=text_embeddings, normalized=True,k=R_k)
-        retrieval_results_T2I = get_retrevial_metrics(modality1_emb=text_embeddings, modality2_emb=sat_embeddings, normalized=True,k=R_k)
+        retrieval_results_I2T = get_retrieval_metrics(modality1_emb=sat_embeddings, modality2_emb=text_embeddings, normalized=True,k=R_k)
+        retrieval_results_T2I = get_retrieval_metrics(modality1_emb=text_embeddings, modality2_emb=sat_embeddings, normalized=True,k=R_k)
         
-        self.log(f'I2T_Recall', retrieval_results_I2T['R@'+str(R_k)])
+        self.log(f'I2T_Recall', retrieval_results_I2T[recall_key(R_k)])
         self.log(f'I2T_Median_Rank', retrieval_results_I2T['Median Rank'])
         
-        self.log(f'T2I_Recall', retrieval_results_T2I['R@'+str(R_k)])
+        self.log(f'T2I_Recall', retrieval_results_T2I[recall_key(R_k)])
         self.log(f'T2I_Median_Rank', retrieval_results_T2I['Median Rank'])
         self.valid_end_list = []
         return retrieval_results_I2T, retrieval_results_T2I
@@ -201,12 +190,10 @@ class sat2textModel(pl.LightningModule):
         dset = Dataset_soundscape(
                                 split="train",
                                 sat_input_size=self.hparams.sat_input_size,
-                                sat_scale=self.hparams.sat_scale,
                                 test_zoom_level=None,
-                                dataset_type=self.hparams.dataset_type, #'GeoSound_sentinel','GeoSound_bingmap', 'SoundingEarth'
-                                precision=self.hparams.precision)
+                                dataset_type=self.hparams.dataset_type)
         loader = torch.utils.data.DataLoader(dset,batch_size=self.hparams.batch_size,
-                    shuffle=False, pin_memory=False, persistent_workers=False,num_workers=self.hparams.num_workers,
+                    shuffle=True, pin_memory=False, persistent_workers=False,num_workers=self.hparams.num_workers,
                     )
         return loader
 
@@ -214,10 +201,8 @@ class sat2textModel(pl.LightningModule):
         dset = Dataset_soundscape(
                                 split="val",
                                 sat_input_size=self.hparams.sat_input_size,
-                                sat_scale=self.hparams.sat_scale,
                                 test_zoom_level=None,
-                                dataset_type=self.hparams.dataset_type, #'GeoSound_sentinel','GeoSound_bingmap', 'SoundingEarth'
-                                precision=self.hparams.precision)
+                                dataset_type=self.hparams.dataset_type)
         loader = torch.utils.data.DataLoader(dset,batch_size=self.hparams.batch_size,
                     shuffle=False, pin_memory=False, persistent_workers=False,num_workers=self.hparams.num_workers,
                     )
@@ -245,12 +230,7 @@ class sat2textModel(pl.LightningModule):
             T_0=self.warm_up_iterations
         )
 
-        gradient_clip_val = 0.5  # Adjust this value as needed
-        gradient_clip_algorithm = "norm"  # or "value"
-
         return {'optimizer': self.optim, 
-                "gradient_clip_val": gradient_clip_val,
-                "gradient_clip_algorithm": gradient_clip_algorithm,
         'lr_scheduler': {
             'name':'train/lr',
             'scheduler': self.scheduler,

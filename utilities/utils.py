@@ -11,6 +11,8 @@ from torchvision import transforms
 
 
 def clean_datetime_str(date):
+    if not isinstance(date, str):
+        return None
     t = date.lower().strip()
     try:
         if "am" in t or "pm" in t:
@@ -54,9 +56,9 @@ def central_crop_bbox(image_width, image_height, crop_width, crop_height):
     return (left, upper, right, lower)
 
 
-def get_image(image_path, zoom_level=1, sat_type="bingmap"):
+def crop_image(image, zoom_level=1, sat_type="bingmap"):
+    """Central-crop a PIL image to ``zoom_level * tile_size[sat_type]`` pixels."""
     crop_size = zoom_level * tile_size[sat_type]
-    image = Image.open(image_path)
     bbox = central_crop_bbox(
         image_width=image.size[0],
         image_height=image.size[1],
@@ -64,6 +66,11 @@ def get_image(image_path, zoom_level=1, sat_type="bingmap"):
         crop_height=crop_size,
     )
     return image.crop(bbox)
+
+
+def get_image(image_path, zoom_level=1, sat_type="bingmap"):
+    """File-path variant of :func:`crop_image`. Kept for backward compatibility."""
+    return crop_image(Image.open(image_path), zoom_level=zoom_level, sat_type=sat_type)
 
 
 def sat_transform(is_train=True, input_size=224, sat_type="sentinel", zoom_level=1):

@@ -10,13 +10,14 @@ A unified framework for trimodal (satellite image ↔ audio ↔ text) contrastiv
 sat2sound/
 ├── src/              # trimodal contrastive learning core (train / eval / models)
 ├── sat2text/         # image ↔ text ablation (no audio branch)
+├── configs/          # YAML configs for main experiments (ablations via CLI overrides)
 ├── utilities/        # shared helpers: sat transforms, MGACLAP mel extraction
 ├── data_prep/        # offline preprocessing: mel features + LLaVA captions
 ├── demos/            # Gradio apps: retrieval + attention heatmap
 ├── .secrets/         # local-only API keys (gitignored)
 ├── environment.yml   # conda env spec
 ├── pyproject.toml    # repo is pip-installable as an editable package
-└── launch_exprs.sh   # full train + eval examples
+└── launch_exprs.sh   # full train + eval recipes for every reproducible table
 ```
 
 ## Install
@@ -31,7 +32,7 @@ pip install -e .
 
 ## Configure
 
-Paths default to repo-relative subdirectories (`./data`, `./ckpts`, `./logs`). Override any of them via environment variable — see `src/config.py` for the full list:
+Paths default to repo-relative subdirectories where possible (`./ckpts`, `./logs`); the data root defaults to the author's cluster path and **must** be overridden for a fresh install. Set `SAT2SOUND_DATA_PATH` to your GeoSound data root — see `src/config.py` for the full list of env vars:
 
 ```bash
 export SAT2SOUND_DATA_PATH=/mnt/big/sat2sound_data
@@ -51,51 +52,109 @@ The `.secrets/` directory is gitignored. See `.secrets/README.md`.
 
 ## Data prep
 
-Both steps are optional — the training loop supports both raw-audio and precomputed-mel paths. Skip the mel-precompute step and pass `--precomputed_mel 0` to train, at the cost of slower data loading.
+Training and evaluation read exclusively from HuggingFace datasets — no local file layout is required at runtime. Two self-contained datasets cover everything:
+
+| Artifact | Contents | Role |
+|---|---|---|
+| `mvrl/GeoSound` | 32 kHz audio, Bing + Sentinel imagery, audio caption, LLaVA soundscape captions (all zoom levels), precomputed MGACLAP mel features, metadata | **Primary** — GeoSound dataset |
+| `mvrl/SoundingEarth` | 32 kHz audio, GoogleEarth imagery, audio caption, LLaVA soundscape captions (zl=1), precomputed MGACLAP mel features, metadata | **Primary** — SoundingEarth (Heidler et al. 2023 splits) |
+
+Both IDs are overridable via env var (`SAT2SOUND_HF_GEOSOUND_ID`, `SAT2SOUND_HF_SOUNDINGEARTH_ID`) so you can point at a fork or private mirror.
+
+**SoundingEarth ⊂ GeoSound (audio-wise).** The Aporee audio in `mvrl/SoundingEarth` is a subset of GeoSound's Aporee audio, with different (Heidler 10 km geography-aware) splits. GoogleEarth imagery is unique to SoundingEarth.
+
+### Training
 
 ```bash
-# 1. Pre-extract MGACLAP mel features (recommended for fast training).
-python -m data_prep.compute_mel_features_mgaclap \
-    --data_path ./data \
-    --metadata_csv ./data/metafiles/GeoSound/train_metadata.csv \
-    --metadata_csv ./data/metafiles/GeoSound/val_metadata.csv \
-    --metadata_csv ./data/metafiles/GeoSound/test_metadata.csv \
-    --out_dir ./data/GeoSound_audio_mel_feats/mgaclap \
-    --aporee_metadata ./data/aporee/final_metadata_with_captions.csv
-
-# 2. Generate LLaVA soundscape captions for the satellite imagery.
-python -m data_prep.generate_llava_captions \
-    --dataset GeoSound --sat_type bingmap \
-    --data_path ./data \
-    --metadata_csv ./data/metafiles/GeoSound/train_metadata.csv \
-    --metadata_csv ./data/metafiles/GeoSound/val_metadata.csv \
-    --metadata_csv ./data/metafiles/GeoSound/test_metadata.csv \
-    --out_json ./data/metafiles/GeoSound/llava_caption_for_bingmap.json
+# Loads GeoSound / SoundingEarth from HF (audio, imagery, captions, mel features all included).
+python -m src.train --config configs/sat2sound/bingmap_withmeta.yaml
 ```
+
+**Mel features** (`--precomputed_mel`):
+
+| Value | Behavior | Trade-off |
+|---|---|---|
+| `1` *(default)* | Load precomputed 5-segment mel stacks from the `mel_features` column of the primary HF dataset row. | Faster training; mel stacks are already embedded in `mvrl/GeoSound` / `mvrl/SoundingEarth`. |
+| `0` | Compute mel on-the-fly from the row's `audio` array each step. | No extra storage; slower steps. Useful when swapping the audio encoder. |
+
+### Regenerating the derivative artifacts (for research)
+
+The Sat2Sound paper uses LLaVA-1.5-7B for soundscape captions and MGACLAP for audio features. Both offline scripts are structured so a future VLM or audio encoder can slot in — the output schemas feed the rest of the pipeline unchanged.
+
+Typical flow when swapping the VLM or encoder:
+
+```bash
+# 1. Generate LLaVA captions for each sat type.
+python -m data_prep.generate_llava_caption_GeoSound --overhead bingmap
+
+python -m data_prep.generate_llava_caption_GeoSound --overhead sentinel
+
+python -m data_prep.generate_llava_caption_SoundingEarth --overhead googleEarth --zoom_level 1
+
+# 2. Pre-compute MGACLAP mel features (GeoSound only — covers SoundingEarth too).
+python -m data_prep.audio_feats_mgaclap \
+    --data_path ./data/GeoSound \
+    --out_dir ./data/GeoSound_audio_mel_feats/mgaclap
+
+# 3. Rebuild the primary HF datasets with the new captions/features and push.
+python -m data_prep.build_hf_geosound --out_dir /tmp/geosound --push <your-namespace>/GeoSound
+python -m data_prep.build_hf_soundingearth --out_dir /tmp/soundingearth --push <your-namespace>/SoundingEarth
+
+# 4. Point training at the forks:
+export SAT2SOUND_HF_GEOSOUND_ID=<your-namespace>/GeoSound
+export SAT2SOUND_HF_SOUNDINGEARTH_ID=<your-namespace>/SoundingEarth
+```
+
+### Rebuilding the primary HF datasets from raw files
+
+For repo owners regenerating `mvrl/GeoSound` / `mvrl/SoundingEarth` themselves from the source on-disk layout (raw MP3s + JPEG tiles under `./data/<source>/...`):
+
+```bash
+# GeoSound — dry-run then full build + push.
+python -m data_prep.build_hf_geosound --out_dir /tmp/geosound-tiny --n 500
+python -m data_prep.build_hf_geosound --out_dir /tmp/geosound --push mvrl/GeoSound
+
+# SoundingEarth — same pattern.
+python -m data_prep.build_hf_soundingearth --out_dir /tmp/se-tiny --n 500
+python -m data_prep.build_hf_soundingearth --out_dir /tmp/soundingearth --push mvrl/SoundingEarth
+```
+
+Both builders require `huggingface-cli login` before `--push`. They read from `cfg.data_path` / `cfg.metafiles_path` (env-overridable via `SAT2SOUND_DATA_PATH` / `SAT2SOUND_METAFILES_PATH`).
+
+**Note on sat2text**: the sat2text baseline ([`sat2text/`](sat2text/)) uses the same HF-backed dataloader as the main trimodal pipeline.
 
 See [`data_prep/README.md`](data_prep/README.md) for details.
 
 ## Train
 
+Training recipes live as YAML in [`configs/sat2sound/`](configs/sat2sound) — one per dataset × ±metadata. Pass a YAML with `--config`; any flag on the CLI overrides the YAML value (precedence is *argparse defaults ← YAML ← CLI*).
+
 ```bash
-python -m src.train \
-  --max_epochs 20 --batch_size 128 --num_workers 16 \
-  --dataset_type GeoSound --sat_type bingmap \
-  --audio_encoder_type mgaclap --text_encoder_type flant5 \
-  --precomputed_mel 1 \
-  --metadata_fusion early --metadata_type latlong_month_time_asource_tsource \
-  --shared_codebook 1 --fdt_weight 1 \
-  --run_name bingmap_withmeta
+# Main experiment
+python -m src.train --config configs/sat2sound/bingmap_withmeta.yaml
 ```
 
-`launch_exprs.sh` has the full matrix of training + evaluation commands for all sat-type / metadata / dataset variants.
+For ablations, load a main config and override only the flag(s) you want to change. Always pass a fresh `--run_name` so checkpoints and W&B don't collide:
+
+```bash
+# Loss ablation: trimodal only (disable both auxiliary losses)
+python -m src.train --config configs/sat2sound/bingmap_withmeta.yaml \
+  --combined_modality_loss 0 --fdt_weight 0 \
+  --run_name bingmap_trimodal
+
+# Codebook size sweep
+python -m src.train --config configs/sat2sound/bingmap_withmeta.yaml \
+  --codebook_size 4000 --run_name bingmap_cb4000
+```
+
+[`launch_exprs.sh`](launch_exprs.sh) has the full set of train + eval commands reproducing every table in the paper except Tables 3, 10, 11, 15, 16 (which require human ratings or external baselines).
 
 ### Raw audio vs precomputed mel
 
 The dataloader supports both paths via `--precomputed_mel`:
 
-- `--precomputed_mel 1` (default): loads pre-extracted `.pth` tensors from `cfg.mel_feats_path`. Produced by `data_prep.compute_mel_features_mgaclap`.
-- `--precomputed_mel 0`: loads raw audio at each step and extracts features on-the-fly using `utilities.audio_features.get_audio_feat_mgaclap`. No preprocessing needed, slower training steps.
+- `--precomputed_mel 1` (default): reads the precomputed `mel_features` column directly from the `mvrl/GeoSound` / `mvrl/SoundingEarth` HF dataset row (a 5 × n_mels × T float32 stack; one segment is sampled randomly each step).
+- `--precomputed_mel 0`: loads the raw `audio` array from the HF row and extracts mel features on-the-fly using `utilities.audio_features.get_audio_feat_mgaclap`. No extra storage needed; slower training steps.
 
 ## Evaluate
 
@@ -114,12 +173,10 @@ python -m src.evaluate_text --expr bingmap_withmeta \
 
 ## sat2text (image ↔ text ablation)
 
-A smaller variant that drops the audio branch and trains satellite-image ↔ caption alignment only, useful as a baseline.
+A smaller variant that drops the audio branch and trains satellite-image ↔ caption alignment only, useful as a baseline. Configs in [`configs/sat2text/`](configs/sat2text).
 
 ```bash
-python -m sat2text.train_i2t --dataset_type GeoSound_bingmap --sat_type bingmap \
-  --run_name bingmap_i2t_baseline --caption_type image --sat_scale multi \
-  --max_epochs 20 --batch_size 128
+python -m sat2text.train_i2t --config configs/sat2text/bingmap_i2t_baseline.yaml
 
 python -m sat2text.evaluate_i2t --dataset_type GeoSound_bingmap --sat_type bingmap \
   --expr bingmap_i2t_baseline --test_zoom_level 3 \

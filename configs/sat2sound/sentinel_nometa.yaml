@@ -1,0 +1,27 @@
+# GeoSound / Sentinel — no metadata fusion.
+
+run_name: sentinel_nometa
+project_name: sat2sound
+mode: train
+wandb_mode: online
+
+# Dataset / satellite
+dataset_type: GeoSound
+sat_type: sentinel
+sat_input_size: 224
+metadata_type: none
+
+# Training
+max_epochs: 20
+batch_size: 128
+num_workers: 16
+val_check_interval: 500
+limit_val_batches: 35
+warm_up_iterations: 5000
+
+# Data pipeline
+precomputed_mel: 1
+
+# Losses
+combined_modality_loss: 1
+fdt_weight: 1.0

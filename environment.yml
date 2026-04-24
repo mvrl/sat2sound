@@ -22,8 +22,11 @@ dependencies:
   - python-dateutil
   - pip:
       - pytorch-lightning==2.2.*
-      - transformers==4.40.*
+      - transformers==4.46.*
       - accelerate
+      - datasets>=3.6,<4.0
+      - huggingface-hub>=0.23.2,<1.0
+      - pyarrow>=19.0
       - einops
       - timm
       - librosa

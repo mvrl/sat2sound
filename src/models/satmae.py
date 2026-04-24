@@ -149,7 +149,7 @@ def vit_base_patch16_w_cls(**kwargs):
 
 def get_SatMAE_model(ckpt_path, device, global_pool=False, expr_type="main"):
 
-    checkpoint = torch.load(ckpt_path, map_location=device)
+    checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
     if expr_type == "main":
         model = vit_base_patch16(global_pool=global_pool)
     elif expr_type == "baseline":
@@ -165,11 +165,7 @@ def get_SatMAE_model(ckpt_path, device, global_pool=False, expr_type="main"):
 
     # load pre-trained model
     msg = model.load_state_dict(checkpoint_model, strict=False)
-    # print(msg)
     print(set(msg.missing_keys))
-    # trunc_normal_(model.head.weight, std=2e-5)
-    model_without_ddp = model
-    # print(model_without_ddp)
     return model
 
 class Projector(nn.Module):

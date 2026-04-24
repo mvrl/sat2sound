@@ -10,14 +10,14 @@ import sys
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from ruamel import yaml
+import yaml
 
 # Make MGACLAP's flat imports (e.g. ``from cnns import ResNet38``) resolvable.
 _MGACLAP_DIR = os.path.join(os.path.dirname(__file__), "MGACLAP")
 if _MGACLAP_DIR not in sys.path:
     sys.path.append(_MGACLAP_DIR)
 
-from MGACLAP.ase_model import ASE  # noqa: E402  (import after sys.path extension)
+from ase_model import ASE  # noqa: E402  (import after sys.path extension)
 
 from src.config import cfg  # noqa: E402
 
@@ -32,10 +32,10 @@ def load_mgaclap(device, yaml_path=None):
     model.to(device)
     try:
         cp_path = config["eval"]["ckpt"]
-        cp = torch.load(cp_path, map_location=device)
+        cp = torch.load(cp_path, map_location=device, weights_only=False)
     except Exception:
         cp_path = cfg.mgaclap_ckpt_path
-        cp = torch.load(cp_path, map_location=device)
+        cp = torch.load(cp_path, map_location=device, weights_only=False)
 
     model.load_state_dict(cp["model"], strict=False)
     print("Model weights loaded from {}".format(cp_path))

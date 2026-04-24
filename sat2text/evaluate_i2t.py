@@ -10,9 +10,10 @@ import torch
 from tqdm import tqdm
 
 from src.config import cfg, ckpt_cfg
-from src.metrics import get_retrevial
+from src.dataloader import load_llava_caption_df
+from src.metrics import get_retrieval, recall_key
 
-from .dataloader_i2t import Dataset_soundscape, llava_caption
+from .dataloader_i2t import Dataset_soundscape
 from .engine_i2t import sat2textModel
 
 def save_dict_to_json(dictionary, output_file):
@@ -21,11 +22,10 @@ def save_dict_to_json(dictionary, output_file):
         json_file.write('\n')  # Add a newline character for better readability
 
 def l2normalize(batch_embeddings):
-    return batch_embeddings/batch_embeddings.norm(p=2,dim=-1, keepdim=True)
+    return batch_embeddings / (batch_embeddings.norm(p=2, dim=-1, keepdim=True) + 1e-8)
 
 def get_captions(lcdf, topkdf, test_zoom_level=1, idx=0):
-    # Merge lcdf with topkdf to get captions for both ground truth and predicted keys
-    # Create a column for top1_key from the top_keys list in topkdf
+    topkdf = topkdf.copy()
     topkdf['top1_key'] = topkdf['top_keys'].apply(lambda x: x[idx])
 
     # Merge lcdf with topkdf for both ground truth (gt) and predicted (top1) keys
@@ -37,8 +37,10 @@ def get_captions(lcdf, topkdf, test_zoom_level=1, idx=0):
                        left_on='top1_key', right_on='sample_id', how='left')
 
     # Extract the relevant 'text' field for ground truth and predicted captions
-    gt_df['gt_caption'] = gt_df['captions'].apply(lambda x: x['text' + str(test_zoom_level)])
-    pred_df['top1_caption'] = pred_df['captions'].apply(lambda x: x['text' + str(test_zoom_level)])
+    gt_df['gt_caption'] = gt_df['captions'].apply(
+        lambda x: x.get('text' + str(test_zoom_level), x.get('text1', '')) if isinstance(x, dict) else '')
+    pred_df['top1_caption'] = pred_df['captions'].apply(
+        lambda x: x.get('text' + str(test_zoom_level), x.get('text1', '')) if isinstance(x, dict) else '')
 
     # Construct the final DataFrame
     outdf = pd.DataFrame({
@@ -79,7 +81,7 @@ class Evaluate(object):
     
     def load_model(self):
         #load geoclap model from checkpoint
-        pretrained_ckpt = torch.load(self.ckpt_path,map_location=self.device)
+        pretrained_ckpt = torch.load(self.ckpt_path, map_location=self.device, weights_only=False)
         hparams = pretrained_ckpt['hyper_parameters']
         assert (hparams['dataset_type'] == self.dataset_type) and  (hparams['sat_type'] == self.sat_type)#just a safety check to ensure usage of right checkpoint
         pretrained_weights = pretrained_ckpt['state_dict']
@@ -97,24 +99,18 @@ class Evaluate(object):
         dset = Dataset_soundscape(
                                 split=self.split,
                                 sat_input_size=self.hparams.sat_input_size,
-                                sat_scale=self.hparams.sat_scale,
                                 test_zoom_level=self.test_zoom_level,
-                                dataset_type=self.hparams.dataset_type, #'GeoSound_sentinel','GeoSound_bingmap', 'SoundingEarth'
-                                precision=self.hparams.precision)
+                                dataset_type=self.hparams.dataset_type) #'GeoSound_sentinel','GeoSound_bingmap', 'SoundingEarth'
 
         loader = torch.utils.data.DataLoader(dset,batch_size=self.hparams.batch_size,
                     shuffle=False, pin_memory=False, persistent_workers=False,num_workers=self.hparams.num_workers,
                     )
-        return loader 
-    
+        return loader
+
     def validation_step(self, batch, batch_idx):
         batch = self.model.prepare_batch(batch)
-        if self.hparams.precision == 'half':
-            with torch.cuda.amp.autocast():
-                outputs = self.model.shared_step(batch,train=False)
-        else:
-            outputs = self.model.shared_step(batch,train=False)
-       
+        outputs = self.model.shared_step(batch,train=False)
+
         outputs['embeds']['fdt_sat_embeds'] = outputs['embeds']['fdt_sat_embeds'].detach().cpu().to(torch.float32)
         outputs['embeds']['fdt_txt_embeds'] = outputs['embeds']['fdt_txt_embeds'].detach().cpu().to(torch.float32)
 
@@ -147,11 +143,11 @@ class Evaluate(object):
         R_k = self.recall_at/100*sat_gallery_embeddings.shape[0]
         print("size of gallery:",sat_gallery_embeddings.shape)
         
-        retrieval_results_I2T, topkeys_df = get_retrevial(modality1_emb=l2normalize(sat_query_embeddings), modality2_emb=l2normalize(text_gallery_embeddings), normalized=True,k=R_k,keys=gt_keys,save_top=1)
-        retrieval_results_T2I, topkeys_df = get_retrevial(modality1_emb=l2normalize(text_query_embeddings), modality2_emb=l2normalize(sat_gallery_embeddings), normalized=True,k=R_k,keys=gt_keys,save_top=1)
+        retrieval_results_I2T, i2t_topkeys_df = get_retrieval(modality1_emb=l2normalize(sat_query_embeddings), modality2_emb=l2normalize(text_gallery_embeddings), normalized=True,k=R_k,keys=gt_keys,save_top=1)
+        retrieval_results_T2I, _topkeys_df_t2i = get_retrieval(modality1_emb=l2normalize(text_query_embeddings), modality2_emb=l2normalize(sat_gallery_embeddings), normalized=True,k=R_k,keys=gt_keys,save_top=1)
         
-        lcdf = llava_caption[self.sat_type]
-        outdf =  get_captions(lcdf=lcdf,topkdf=topkeys_df,test_zoom_level=self.test_zoom_level, idx=0)
+        lcdf = load_llava_caption_df(self.sat_type)
+        outdf =  get_captions(lcdf=lcdf,topkdf=i2t_topkeys_df,test_zoom_level=self.test_zoom_level, idx=0)
 
         return retrieval_results_I2T, retrieval_results_T2I, R_k, outdf
 
@@ -165,7 +161,7 @@ if __name__ == '__main__':
     parser.add_argument('--test_zoom_level', type=int, default=1)
     parser.add_argument('--recall_at', type=int, default=10)
     parser.add_argument('--split', type=str, default="test") #options: val, test
-    parser.add_argument('--dataset_type', type=str, default="GeoSound_bingmap",choices=["GeoSound_bingmap","SoundingEarth"])
+    parser.add_argument('--dataset_type', type=str, default="GeoSound_bingmap",choices=["GeoSound_bingmap","GeoSound_sentinel","SoundingEarth"])
     parser.add_argument('--sat_type', type=str, default='bingmap', choices=['bingmap','googleEarth']) 
     parser.add_argument('--save_results', type=str, default='false', choices=['true','false'])
     parser.add_argument('--save_retrieved', type=str, default='false', choices=['true','false'])
@@ -173,7 +169,11 @@ if __name__ == '__main__':
     parser.add_argument('--expr', type=str, default='bingmap_i2t_baseline') 
                                                                
     args = parser.parse_args()
-    assert (len(args.expr) !=0) or (len(args.ckpt_path) !=0) 
+    if not args.ckpt_path and args.expr not in ckpt_cfg:
+        parser.error(
+            f"--ckpt_path not provided and --expr={args.expr!r} is not in ckpt_cfg. "
+            "Either pass --ckpt_path directly or populate ckpt_cfg in src/config.py."
+        )
     
     #params
     set_seed(56)
@@ -189,19 +189,20 @@ if __name__ == '__main__':
                           test_zoom_level=int(args.test_zoom_level), dataset_type=args.dataset_type, sat_type=args.sat_type)
 
     results_I2T, results_T2I, R_k, top_df = evaluation.get_final_metrics()
-    print("IMAGE TO TEXT RETREVIAL RESULTS:",results_I2T)
-    print("TEXT TO IMAGE RETREVIAL RESULTS:",results_T2I)
+    print("IMAGE TO TEXT RETRIEVAL RESULTS:",results_I2T)
+    print("TEXT TO IMAGE RETRIEVAL RESULTS:",results_T2I)
     print("##############################################################################################################")
+    rk_label = recall_key(R_k)
     results_dict = {
                     'dataset_type':args.dataset_type, 'overhead_type':args.sat_type, 'loss_type':"infonce",
                     'expr':args.expr,
                     'test_zoom_level':args.test_zoom_level,
-                    'I2T_R@10':results_I2T['R@'+str(R_k)],'I2T_median':results_I2T['Median Rank'],
-                    'T2I_R@10':results_T2I['R@'+str(R_k)],'T2I_median':results_T2I['Median Rank'],
+                    f'I2T_{rk_label}':results_I2T[rk_label],'I2T_median':results_I2T['Median Rank'],
+                    f'T2I_{rk_label}':results_T2I[rk_label],'T2I_median':results_T2I['Median Rank'],
                     'ckpt_path':ckpt_path
                     }
     
-    if args.save_retrieved:
+    if args.save_retrieved == "true":
         log_path = os.path.dirname(cfg.results_json)
         top_df.to_csv(os.path.join(log_path,args.expr+"_IMAGE2TEXT_"+str(args.test_zoom_level)+".csv"))
 

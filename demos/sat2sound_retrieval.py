@@ -106,7 +106,7 @@ def set_seed(seed: int = 56) -> None:
 
 
 def load_model(ckpt_path, device):
-    pretrained_ckpt = torch.load(ckpt_path, map_location=device)
+    pretrained_ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     hparams = pretrained_ckpt["hyper_parameters"]
     hparams["meta_droprate"] = 0.0
     model = sat2soundModel(Namespace(**hparams)).to(device)
@@ -249,7 +249,6 @@ def build_coord_picker_map():
         """
     ))
     map_.add_child(folium.LatLngPopup())
-    plugins.LocateControl(auto_start=False).add_to(map_)
     return map_._repr_html_()
 
 
@@ -278,7 +277,7 @@ def main():
     gallery = load_gallery(gallery_path)
     map_html = build_coord_picker_map()
 
-    def get_audio(html, latitude, longitude, sat_img_height):
+    def get_audio(_html, latitude, longitude, sat_img_height):
         init_time = time.time()
         out_file = os.path.join(log_dir, "demo.jpeg")
         download_satellite_tile(latitude, longitude, api_key, out_file)
