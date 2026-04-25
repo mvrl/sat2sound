@@ -374,7 +374,7 @@ def main():
     )
     parser.add_argument(
         "--max_shard_size",
-        default="2GB",
+        default="50GB",
         help='Target shard size for save_to_disk / push_to_hub (e.g. "500MB", "2GB", "5GB"). '
              "Must stay well under HF Hub's ~20GB soft cap / 50GB hard cap. "
              "Small splits naturally collapse to one shard if they fit.",
