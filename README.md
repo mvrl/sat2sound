@@ -2,7 +2,7 @@
 
 Trimodal (satellite image ↔ audio ↔ text) contrastive learning with a shared multimodal codebook.
 
-![Framework Diagram](framework.png)
+<img src="framework.png" width="800"/>
 
 ## Install
 
