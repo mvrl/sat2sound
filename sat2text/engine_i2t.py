@@ -1,4 +1,4 @@
-#This experiment is for only image to text training on satellite image and LlaVA caption
+"""Image↔LLaVA-caption (sat2text) contrastive training engine."""
 import numpy as np
 import pytorch_lightning as pl
 import torch
@@ -8,12 +8,12 @@ from transformers import AutoTokenizer, T5EncoderModel
 from src.loss import compute_loss
 from src.metrics import get_retrieval_metrics, recall_key
 from src.models.FDT.fdt_model import FDT
-from src.models.sat_encoder import SatMAE_backbone
+from src.models.satmae import SatMAE_backbone
 
 from .dataloader_i2t import Dataset_soundscape
 
 def l2normalize(batch_embeddings):
-    return batch_embeddings / (batch_embeddings.norm(p=2, dim=-1, keepdim=True) + 1e-8)
+    return batch_embeddings / batch_embeddings.norm(p=2, dim=-1, keepdim=True)
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -52,11 +52,11 @@ def get_text_embeds(prompts):
 class sat2textModel(pl.LightningModule):
     def __init__(self, hparams):
 
-        #save parameters
+
         super().__init__()
-        #save initialized hyperparameters
+
         self.save_hyperparameters(hparams)
-        #set path attributes
+
         self.valid_end_list =[]
         satmae_ckpt_path = self.hparams.satmae_ckpt_path
         self.satmae_backbone = SatMAE_backbone(satmae_ckpt_path,device=self.device, fc_dim =self.hparams.fc_dim, global_pool=False)
@@ -83,7 +83,7 @@ class sat2textModel(pl.LightningModule):
                     if item is not None:
                         batch[k] = batch[k].to(self.device)
 
-        #llava_caption_input
+
         llava_caption_patch_embeds, llava_caption_boolean_mask = get_text_embeds(batch['llava_caption'])
         batch['llava_caption_input'] = {'patch_embeds':llava_caption_patch_embeds,'boolean_mask':llava_caption_boolean_mask}
 
@@ -139,7 +139,6 @@ class sat2textModel(pl.LightningModule):
         outputs = self.shared_step(batch, train=True)
         loss = outputs['loss_dict']['loss']
         self.manual_backward(loss)
-        self.clip_gradients(optimizer, gradient_clip_val=0.5, gradient_clip_algorithm="norm")
         optimizer.step()
 
         self.scheduler.step()
@@ -159,7 +158,7 @@ class sat2textModel(pl.LightningModule):
         self.valid_end_list.append(outputs)
         return outputs
 
-    #compute retrieval metrics for a random batch of validation 
+
     def on_validation_epoch_end(self):
         outputs = self.valid_end_list
         sat_embeddings = []
@@ -187,13 +186,15 @@ class sat2textModel(pl.LightningModule):
        
 
     def train_dataloader(self):
+        from sat2text.dataloader_i2t import _USE_STREAMING
         dset = Dataset_soundscape(
                                 split="train",
                                 sat_input_size=self.hparams.sat_input_size,
                                 test_zoom_level=None,
                                 dataset_type=self.hparams.dataset_type)
-        loader = torch.utils.data.DataLoader(dset,batch_size=self.hparams.batch_size,
-                    shuffle=True, pin_memory=False, persistent_workers=False,num_workers=self.hparams.num_workers,
+        loader = torch.utils.data.DataLoader(dset, batch_size=self.hparams.batch_size,
+                    shuffle=False if _USE_STREAMING else True,
+                    pin_memory=False, persistent_workers=False, num_workers=self.hparams.num_workers,
                     )
         return loader
 
@@ -203,14 +204,11 @@ class sat2textModel(pl.LightningModule):
                                 sat_input_size=self.hparams.sat_input_size,
                                 test_zoom_level=None,
                                 dataset_type=self.hparams.dataset_type)
-        loader = torch.utils.data.DataLoader(dset,batch_size=self.hparams.batch_size,
-                    shuffle=False, pin_memory=False, persistent_workers=False,num_workers=self.hparams.num_workers,
+        loader = torch.utils.data.DataLoader(dset, batch_size=self.hparams.batch_size,
+                    shuffle=False, pin_memory=False, persistent_workers=False, num_workers=self.hparams.num_workers,
                     )
         return loader
 
-    # def on_before_optimizer_step(self, optimizer):
-    #     for name, param in self.named_parameters():
-    #         if param.grad is None:
     #             print(name)
 
     def configure_optimizers(self):

@@ -34,4 +34,4 @@ training:
 
 
 eval:
-  ckpt: ckpts/MGACLAP/mga-clap.pt  # override via cfg.mgaclap_ckpt_path or edit this file
+  ckpt: ckpts/MGACLAP/mga-clap.pt  # local override; falls back to MVRL/sat2sound backbones/mga-clap.pt via HF

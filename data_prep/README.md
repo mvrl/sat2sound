@@ -4,10 +4,11 @@ Offline preprocessing scripts for GeoSound and SoundingEarth. Steps 1 and 2
 produce caches consumed by the training dataloader; step 3 assembles the
 HuggingFace datasets that are pushed to the Hub.
 
-All data is expected under the GeoSound root:
+All data is expected under the GeoSound root set by `SAT2SOUND_DATA_PATH`
+(default: `<repo>/data/GeoSound`):
 
 ```
-/projects/bdbk/subashk/data/data_raw/GeoSound/
+$SAT2SOUND_DATA_PATH/
 ├── aporee/
 │   ├── raw_audio/<long_key>/<mp3name>
 │   └── images/{bingmap,googleEarth,sentinel,sentinel_geoclap}/
@@ -36,10 +37,11 @@ All data is expected under the GeoSound root:
         └── SoundingEarth_llava_caption_for_googleEarth_zl_1.json  ← produced by step 2
 ```
 
-Precomputed mel features are written to a sibling directory:
+Precomputed mel features are written to a sibling directory (controlled by
+`SAT2SOUND_MEL_FEATS_PATH`, default: `<repo>/data/GeoSound_audio_mel_feats`):
 
 ```
-/projects/bdbk/subashk/data/data_raw/GeoSound_audio_mel_feats/mgaclap/
+$SAT2SOUND_MEL_FEATS_PATH/mgaclap/
 └── <source>/<sample_id>.pth    (e.g. aporee/aporee-10001_11943.pth)
 ```
 
@@ -129,7 +131,7 @@ python -m data_prep.build_hf_geosound \
 python -m data_prep.build_hf_geosound \
     --out_dir /tmp/geosound \
     --validate \
-    --push mvrl/GeoSound
+    --push MVRL/GeoSound
 ```
 
 Row schema: `sample_id, source, audio, bingmap_image, sentinel_image,
@@ -149,7 +151,7 @@ python -m data_prep.build_hf_soundingearth --out_dir /tmp/se-tiny --n 500
 python -m data_prep.build_hf_soundingearth \
     --out_dir /tmp/soundingearth \
     --validate \
-    --push mvrl/SoundingEarth
+    --push MVRL/SoundingEarth
 ```
 
 Row schema: `sample_id, short_id, audio, googleearth_image,
@@ -163,6 +165,6 @@ Both datasets support loading only the columns you need:
 ```python
 from datasets import load_dataset
 
-ds = load_dataset("mvrl/GeoSound", split="train",
+ds = load_dataset("MVRL/GeoSound", split="train",
                   columns=["sample_id", "audio", "latitude", "longitude"])
 ```

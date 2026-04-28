@@ -1,23 +1,4 @@
-"""Gradio demo: retrieve a synthetic soundscape from a gallery given a satellite image.
-
-Workflow:
-  1. User clicks a location on an interactive Folium world map.
-  2. We download a satellite tile from Azure Maps (using BingMap-style credentials).
-  3. We run the trained Sat2Sound model to produce a satellite embedding.
-  4. We cosine-match the embedding against pre-computed text embeddings in the
-     gallery HDF5 and take the top-1 caption.
-  5. We play back the pre-synthesized audio stored alongside the top-1 caption.
-
-Required environment (see demos/demo_config.py):
-
-    SAT2SOUND_CKPT         path to the trained Sat2Sound checkpoint
-    SAT2SOUND_GALLERY      path to the gallery HDF5 (has audio_embedding,
-                           text_embedding_zl{1,3,5}, llava_caption_zl{1,3,5},
-                           synth_audio_zl{1,3,5}, audio_raw, audio_caption)
-    BINGMAP_API_KEY        Bing/Azure Maps key (or put it in .secrets/bingmap_api.txt)
-
-Run: ``python demos/sat2sound_retrieval.py``
-"""
+"""Gradio retrieval demo: map click → ESRI satellite tile → Sat2Sound embedding → nearest gallery caption/audio."""
 
 import os
 import random
@@ -35,7 +16,7 @@ from folium import plugins
 from PIL import Image
 from torchvision import transforms
 
-from demos.demo_config import bingmap_api, gallery_path, log_dir, metadata_config, sat2sound_ckpt
+from demos.demo_config import gallery_path, log_dir, metadata_config, sat2sound_ckpt
 from src.engine import l2normalize, sat2soundModel
 from utilities.utils import sat_transform
 
@@ -43,24 +24,6 @@ from utilities.utils import sat_transform
 zoom_levels_dict = {300: 1, 900: 3, 1500: 5}
 
 
-def load_api_key(file_path):
-    """Load the Bing/Azure Maps key from file, falling back to the env var."""
-    env_val = os.environ.get("BINGMAP_API_KEY", "").strip()
-    if env_val:
-        return env_val
-    try:
-        with open(file_path, "r") as f:
-            key = f.read().strip()
-        if key:
-            os.environ["BINGMAP_API_KEY"] = key
-            return key
-    except OSError:
-        pass
-    print(
-        f"[warn] No Bing/Azure Maps API key found at {file_path} or in BINGMAP_API_KEY. "
-        "Tile downloads will fail."
-    )
-    return ""
 
 
 def load_gallery(path):
@@ -106,6 +69,9 @@ def set_seed(seed: int = 56) -> None:
 
 
 def load_model(ckpt_path, device):
+    if not os.path.isfile(ckpt_path):
+        from src.hub import resolve_hf_ckpt
+        ckpt_path = resolve_hf_ckpt(ckpt_path)
     pretrained_ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     hparams = pretrained_ckpt["hyper_parameters"]
     hparams["meta_droprate"] = 0.0
@@ -181,17 +147,16 @@ def get_sat_embedding(model, hparams, sat_image, zoom_level, lat, lon):
     return sd_img_ft
 
 
-def download_satellite_tile(lat, lon, api_key, out_file, zoom=18, width=1500, height=1500):
-    # Azure Maps static imagery endpoint (compatible with Bing-style keys).
+def download_satellite_tile(lat, lon, out_file, zoom=18, width=1500, height=1500):
+    """Download a satellite tile from ESRI World Imagery — no API key needed."""
+    lat, lon = float(lat), float(lon)
+    deg_per_px = 360.0 / (256 * (2 ** zoom))
+    half_w = deg_per_px * width / 2
+    half_h = deg_per_px * height / 2
+    bbox = f"{lon - half_w},{lat - half_h},{lon + half_w},{lat + half_h}"
     url = (
-        f"https://atlas.microsoft.com/map/static"
-        f"?api-version=2024-04-01"
-        f"&tilesetId=microsoft.imagery"
-        f"&center={lon},{lat}"
-        f"&zoom={zoom}"
-        f"&width={width}"
-        f"&height={height}"
-        f"&subscription-key={api_key}"
+        "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export"
+        f"?bbox={bbox}&bboxSR=4326&size={width},{height}&format=jpg&f=image"
     )
     download(url=url, out_file=out_file)
 
@@ -258,29 +223,26 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Running on device: {device}")
 
-    api_key = load_api_key(bingmap_api)
-
     os.makedirs(log_dir, exist_ok=True)
 
-    if not os.path.exists(sat2sound_ckpt):
-        raise FileNotFoundError(
-            f"Sat2Sound checkpoint not found at {sat2sound_ckpt}. "
-            "Set SAT2SOUND_CKPT in your environment or place the file at the default path."
-        )
     if not os.path.exists(gallery_path):
-        raise FileNotFoundError(
-            f"Gallery HDF5 not found at {gallery_path}. "
-            "Set SAT2SOUND_GALLERY in your environment."
-        )
+        from src.hub import resolve_hf_ckpt
+        print(f"[sat2sound] Gallery not found at {gallery_path}; downloading from HF ...")
+        gallery_path_resolved = resolve_hf_ckpt("demo/GeoSound_gallery_w_bingmap.h5")
+    else:
+        gallery_path_resolved = gallery_path
 
     hparams, model = load_model(ckpt_path=sat2sound_ckpt, device=device)
-    gallery = load_gallery(gallery_path)
+    # Pre-warm FlanT5 so first click isn't slow
+    from src.models.text_encoder import _get_flant5_encoder
+    _get_flant5_encoder()
+    gallery = load_gallery(gallery_path_resolved)
     map_html = build_coord_picker_map()
 
     def get_audio(_html, latitude, longitude, sat_img_height):
         init_time = time.time()
         out_file = os.path.join(log_dir, "demo.jpeg")
-        download_satellite_tile(latitude, longitude, api_key, out_file)
+        download_satellite_tile(latitude, longitude, out_file)
         print("Satellite image downloaded")
 
         transform = transforms.Compose([
@@ -336,7 +298,7 @@ def main():
         clear_btn.click(fn=clear_fields, inputs=None, outputs=[latitude, longitude, sat_img_height])
         submit_btn.click(
             fn=get_audio,
-            inputs=[gr.State(None), latitude, longitude, sat_img_height],
+            inputs=[gr.State(value=None), latitude, longitude, sat_img_height],
             outputs=[sat_img, caption, output],
         )
 

@@ -1,4 +1,4 @@
-# This is the main training engine of the Sat2Sound framework.
+"""Training engine for Sat2Sound trimodal contrastive learning."""
 
 import numpy as np
 import pytorch_lightning as pl
@@ -11,12 +11,13 @@ from src.loss import compute_loss
 from src.metrics import get_retrieval_metrics, recall_key
 from src.models.FDT.fdt_model import FDT
 from src.models.audio_encoder import MGACLAP_audiomodel
-from src.models.sat_encoder import SatMAE_backbone, SatMetaEncoder_early
+from src.models.sat_encoder import SatMetaEncoder_early
+from src.models.satmae import SatMAE_backbone
 from src.models.text_encoder import TextEncoder, get_flant5_embeds
 
 
 def l2normalize(batch_embeddings):
-    return batch_embeddings / (batch_embeddings.norm(p=2, dim=-1, keepdim=True) + 1e-8)
+    return batch_embeddings / batch_embeddings.norm(p=2, dim=-1, keepdim=True)
 
 def prepare_flant5_text_embeds(text_input, device):
     text_patch_embeds, text_boolean_mask = get_flant5_embeds(text_input)
@@ -26,13 +27,9 @@ def prepare_flant5_text_embeds(text_input, device):
 
 class sat2soundModel(pl.LightningModule):
     def __init__(self, hparams):
-
-        #save parameters
         super().__init__()
-        #save initialized hyperparameters
         self.save_hyperparameters(hparams)
-        #set path attributes
-        self.valid_end_list =[]
+        self.valid_end_list = []
         satmae_ckpt_path = self.hparams.satmae_ckpt_path
         self.satmae_backbone = SatMAE_backbone(satmae_ckpt_path,device=self.device, fc_dim =self.hparams.fc_dim, global_pool=False)
 
@@ -95,16 +92,13 @@ class sat2soundModel(pl.LightningModule):
         _, sd_img_ft, _ = self.fdt.extract_img_sd_ft(sat_token_embeddings_before_fdt, return_token_att=False)
         sat_embeds_dict = {'ctotal': sd_img_ft}
 
-        #encode audio
         audio_token_embeds = self.audio_encoder(batch['audio'])
         _, sd_audio_ft, _ = self.fdt.extract_audio_sd_ft(audio_token_embeds, return_token_att=False)
 
-        #encode audio caption
         audio_text_patch_embeds, audio_text_boolean_mask = self.text_encoder(batch['audio_caption_input'], embed_type="hidden_states")
         pad_mask = torch.where(audio_text_boolean_mask==1, torch.tensor(0.0).to(self.device), torch.tensor(float('-inf')).to(self.device))
         _, sd_audiotxt_ft, _ = self.fdt.extract_txt_sd_ft(audio_text_patch_embeds, pad_mask=pad_mask, return_token_att=False)
 
-        #encode image caption
         text_patch_embeds, text_boolean_mask = self.text_encoder(batch['llava_caption_input'], embed_type="hidden_states")
         pad_mask = torch.where(text_boolean_mask==1, torch.tensor(0.0).to(self.device), torch.tensor(float('-inf')).to(self.device))
         _, sd_txt_ft, _ = self.fdt.extract_txt_sd_ft(text_patch_embeds, pad_mask=pad_mask, return_token_att=False)
@@ -177,7 +171,6 @@ class sat2soundModel(pl.LightningModule):
         outputs = self.shared_step(batch, train=True)
         loss = outputs['loss_dict']['loss']
         self.manual_backward(loss)
-        self.clip_gradients(optimizer, gradient_clip_val=0.5, gradient_clip_algorithm="norm")
         optimizer.step()
 
         self.scheduler.step()
@@ -205,7 +198,6 @@ class sat2soundModel(pl.LightningModule):
         self.valid_end_list.append(outputs)
         return outputs
 
-    #compute retrieval metrics for a random batch of validation
     def on_validation_epoch_end(self):
         outputs = self.valid_end_list
         sat_embeddings = []
@@ -221,7 +213,7 @@ class sat2soundModel(pl.LightningModule):
         audio_embeddings = l2normalize(torch.cat(audio_embeddings,axis=0))
         text_embeddings = l2normalize(torch.cat(text_embeddings,axis=0))
 
-        R_k = self.hparams.recall_at/100*sat_embeddings.shape[0] # Validation with Recall@
+        R_k = self.hparams.recall_at / 100 * sat_embeddings.shape[0]
 
         retrieval_results_I2S = get_retrieval_metrics(modality1_emb=sat_embeddings, modality2_emb=audio_embeddings, normalized=True,k=R_k)
         retrieval_results_S2I = get_retrieval_metrics(modality1_emb=audio_embeddings, modality2_emb=sat_embeddings, normalized=True,k=R_k)
@@ -233,7 +225,6 @@ class sat2soundModel(pl.LightningModule):
         self.log(f'S2I_Median_Rank', retrieval_results_S2I['Median Rank'])
 
 
-        #composed Image-to-Sound retrieval:
         retrieval_results_I2St = get_retrieval_metrics(modality1_emb=sat_embeddings, modality2_emb=l2normalize(audio_embeddings+text_embeddings), normalized=True,k=R_k)
         retrieval_results_St2I = get_retrieval_metrics(modality1_emb=l2normalize(audio_embeddings+text_embeddings), modality2_emb=sat_embeddings, normalized=True,k=R_k)
 
@@ -247,17 +238,19 @@ class sat2soundModel(pl.LightningModule):
 
 
     def train_dataloader(self):
+        from src.dataloader import _USE_STREAMING
         dset = Dataset_soundscape(self.hparams, split="train")
-        loader = torch.utils.data.DataLoader(dset,batch_size=self.hparams.batch_size,
-                    shuffle=True, pin_memory=False, persistent_workers=False,num_workers=self.hparams.num_workers,
-                    collate_fn=lambda batch:collate_batch(batch, metadata_type=self.hparams.metadata_type))
+        loader = torch.utils.data.DataLoader(dset, batch_size=self.hparams.batch_size,
+                    shuffle=False if _USE_STREAMING else True,
+                    pin_memory=False, persistent_workers=False, num_workers=self.hparams.num_workers,
+                    collate_fn=lambda batch: collate_batch(batch, metadata_type=self.hparams.metadata_type))
         return loader
 
     def val_dataloader(self):
         dset = Dataset_soundscape(self.hparams, split="val")
-        loader = torch.utils.data.DataLoader(dset,batch_size=self.hparams.batch_size,
-                    shuffle=False, pin_memory=False, persistent_workers=False,num_workers=self.hparams.num_workers,
-                    collate_fn=lambda batch:collate_batch(batch, metadata_type=self.hparams.metadata_type))
+        loader = torch.utils.data.DataLoader(dset, batch_size=self.hparams.batch_size,
+                    shuffle=False, pin_memory=False, persistent_workers=False, num_workers=self.hparams.num_workers,
+                    collate_fn=lambda batch: collate_batch(batch, metadata_type=self.hparams.metadata_type))
         return loader
 
     def configure_optimizers(self):

@@ -1,5 +1,5 @@
-# This script computes mel spectrogram features for the dataset using MGACLAP's preprocessing pipeline.
-# Refer to the ArgumentParser section of the code for details on the expected inputs and outputs.
+"""Offline MGACLAP mel extraction for GeoSound raw audio; see --help for options."""
+
 
 import os
 import random
@@ -28,11 +28,11 @@ SAMPLE_RATE = 32000
 
 _DEFAULT_GEOSOUND_ROOT = os.environ.get(
     "SAT2SOUND_DATA_PATH",
-    "/projects/bdbk/subashk/data/data_raw/GeoSound",
+    os.path.join(_REPO_ROOT, "data", "GeoSound"),
 )
 _DEFAULT_OUT_DIR = os.environ.get(
     "SAT2SOUND_MEL_FEATS_PATH",
-    "/projects/bdbk/subashk/data/data_raw/GeoSound_audio_mel_feats",
+    os.path.join(_REPO_ROOT, "data", "GeoSound_audio_mel_feats"),
 )
 
 GEOSOUND_ROOT: str = _DEFAULT_GEOSOUND_ROOT

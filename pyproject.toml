@@ -18,5 +18,5 @@ requires-python = ">=3.9"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*", "utilities*", "sat2text*", "data_prep*", "demos*"]
+include = ["src*", "utilities*", "sat2text*", "data_prep*", "demos*", "scripts*"]
 exclude = ["logs*", "ckpts*", "data*", ".secrets*"]

@@ -160,17 +160,17 @@ class MetaFuser_w_cls(pl.LightningModule):
         sat_embeddings = sat_embeddings.unsqueeze(1)
         
         combined_embeddings = torch.cat([sat_embeddings,meta_embeddings],dim=1)
-        # Concatenating CLS token to the beginning of each sequence
+
         cls_token = self.cls_token.expand(combined_embeddings.size(0), -1, -1)
   
         combined_embeddings = torch.cat([cls_token,combined_embeddings], dim=1)
 
-        # Adjusting mask shape to include CLS token and sat_embeddings
+
         meta_masks = torch.cat([torch.ones(meta_masks.size(0), 2).bool().to(meta_masks.device), meta_masks], dim=1)
-        # Applying TransformerEncoder
-        output = self.transformer_encoder(combined_embeddings, src_key_padding_mask=~meta_masks)  # Transpose mask before applying TransformerEncoder
+
+        output = self.transformer_encoder(combined_embeddings, src_key_padding_mask=~meta_masks)
         
-        # Returning output corresponding to the CLS token
+
         cls_output = output[:, 0, :]  # Output corresponding to the CLS token
 
         return cls_output
@@ -187,5 +187,5 @@ class MetaFuser(pl.LightningModule):
         meta_embeddings, meta_masks = self.meta_embed(audio_source,caption_source,latlong,month, time,month_valid,time_valid,eval_meta)
         combined_embeddings = torch.cat([sat_embeddings,meta_embeddings],dim=1)
         combined_masks = torch.cat([torch.ones(sat_embeddings.size(0), sat_embeddings.size(1)).bool().to(sat_embeddings.device), meta_masks], dim=1)
-        output = self.transformer_encoder(combined_embeddings, src_key_padding_mask=~combined_masks)  # Transpose mask before applying TransformerEncoder
+        output = self.transformer_encoder(combined_embeddings, src_key_padding_mask=~combined_masks)
         return output

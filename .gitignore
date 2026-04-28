@@ -1,7 +1,3 @@
-# Secrets (API keys, tokens) — NEVER commit
-.secrets/*
-!.secrets/README.md
-
 # Experiment outputs
 logs/
 flagged/
@@ -25,3 +21,4 @@ ckpts/
 
 # OS
 .DS_Store
+env.sh

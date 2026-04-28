@@ -1,8 +1,4 @@
-"""MGACLAP audio encoder wrapper.
-
-MGACLAP's internal modules use flat imports (``from cnns import ...``), so the
-containing directory is added to ``sys.path`` below.
-"""
+"""MGACLAP audio encoder wrapper; adds ``MGACLAP/`` to ``sys.path`` for its flat imports."""
 
 import os
 import sys
@@ -32,9 +28,14 @@ def load_mgaclap(device, yaml_path=None):
     model.to(device)
     try:
         cp_path = config["eval"]["ckpt"]
+        if not os.path.isfile(cp_path):
+            raise FileNotFoundError(cp_path)
         cp = torch.load(cp_path, map_location=device, weights_only=False)
     except Exception:
         cp_path = cfg.mgaclap_ckpt_path
+        if not os.path.isfile(cp_path):
+            from src.hub import resolve_hf_ckpt
+            cp_path = resolve_hf_ckpt("backbones/mga-clap.pt")
         cp = torch.load(cp_path, map_location=device, weights_only=False)
 
     model.load_state_dict(cp["model"], strict=False)

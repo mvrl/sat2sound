@@ -56,7 +56,7 @@ def get_args():
     parser = ArgumentParser(description='')
     parser.add_argument('--config', type=str, default=None,
                         help='Path to YAML config; values become defaults, CLI flags override.')
-    #training hparams
+
     parser.add_argument('--num_workers', type=int, default=1)
     parser.add_argument('--limit_val_batches', type=int, default=100)
     parser.add_argument('--val_check_interval', type=int, default=500)
@@ -89,7 +89,7 @@ def get_args():
     parser.add_argument('--pseudo_match_alpha', type=float, default=0.1)
     
     parser.add_argument('--recall_at', type=int, default = 10) #percent
-    # Training resuming parameters:
+
     parser.add_argument('--ckpt_path',type=str, default ='none')
     parser.add_argument('--ckpt_mode',type=str, default ='hard')
 
@@ -104,7 +104,7 @@ def get_args():
 if __name__ == '__main__':
     set_seed(56)
     args = get_args()
-    #set learning rate logger
+
     print('Starting Training')
     print(args)
     if args.mode == "dev":
@@ -119,9 +119,9 @@ if __name__ == '__main__':
         args.sat_type = args.dataset_type.split("_")[1]
     
     args.satmae_ckpt_path = cfg.satmae_ckpt_path
-    #initialize model
+
     sat2text_model = sat2textModel(args)
-    #initialize checkpoints and loggers
+
     lr_logger = LearningRateMonitor(logging_interval='step')
     wb_logger = WandbLogger(save_dir=cfg.log_dir,project=args.project_name, name=args.run_name, mode=args.wandb_mode)
     ckpt_monitor1 = ((

@@ -1,3 +1,4 @@
+import os
 import random
 from typing import Optional
 
@@ -6,6 +7,18 @@ from torch.utils.data import Dataset
 
 from src.config import cfg
 from utilities.utils import sat_transform
+
+# Streaming configuration — mirrors src/dataloader priority logic.
+_LOCAL_DATA_PATH: str = os.environ.get("SAT2SOUND_LOCAL_DATA", "")
+_HF_STREAMING: bool = os.environ.get("SAT2SOUND_HF_STREAMING", "1") == "1"
+_USE_STREAMING: bool = (not _LOCAL_DATA_PATH) and _HF_STREAMING
+_SHUFFLE_BUFFER: int = int(os.environ.get("SAT2SOUND_SHUFFLE_BUFFER", "1000"))
+
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "120")
+os.environ.setdefault("HF_DATASETS_TIMEOUT", "120")
+
+import torch.utils.data as _tud  # noqa: E402
+_DatasetBase = _tud.IterableDataset if _USE_STREAMING else _tud.Dataset
 
 
 _IMAGE_COL_BY_SAT = {
@@ -41,22 +54,38 @@ _COLUMNS_BY_SAT = {
 
 
 def _load_hf_split(dataset_id: str, split: str, columns: list):
-    """Load an HF split, falling back from 'val' → 'validation' if needed."""
-    kwargs = {"split": split, "columns": columns}
+    """Local Arrow first (SAT2SOUND_LOCAL_DATA), else load_dataset."""
+    if _LOCAL_DATA_PATH:
+        dataset_name = dataset_id.rsplit("/", 1)[-1]
+        split_key = _SPLIT_ALIASES.get(split, split)
+        local_path = os.path.join(_LOCAL_DATA_PATH, dataset_name, split_key)
+        if os.path.isdir(local_path):
+            from datasets import load_from_disk
+            ds = load_from_disk(local_path)
+            present = [c for c in columns if c in ds.column_names]
+            return ds.select_columns(present)
+    kwargs = {"split": split, "streaming": _HF_STREAMING}
     try:
-        return load_dataset(dataset_id, **kwargs)
+        ds = load_dataset(dataset_id, **kwargs)
     except (ValueError, KeyError):
         if split in _SPLIT_ALIASES and _SPLIT_ALIASES[split] != split:
             kwargs["split"] = _SPLIT_ALIASES[split]
-            return load_dataset(dataset_id, **kwargs)
-        raise
+            ds = load_dataset(dataset_id, **kwargs)
+        else:
+            raise
+    return ds.select_columns(columns)
 
 
-class Dataset_soundscape(Dataset):
+class Dataset_soundscape(_DatasetBase):
     """Sat2Text dataloader backed by the GeoSound / SoundingEarth HF datasets.
 
     Only the satellite image and LLaVA caption columns are downloaded —
     audio and mel_features are not needed for the image-to-text task.
+
+    Streaming mode (``SAT2SOUND_HF_STREAMING=1``)
+    ----------------------------------------------
+    Rows are fetched row-by-row without writing the full split to disk.
+    The class becomes a ``torch.utils.data.IterableDataset`` automatically.
 
     ``dataset_type`` follows the sat2text convention:
       - ``'GeoSound_bingmap'`` or ``'GeoSound_sentinel'``
@@ -91,12 +120,23 @@ class Dataset_soundscape(Dataset):
                 "expected 'GeoSound_bingmap', 'GeoSound_sentinel', or 'SoundingEarth'."
             )
 
+        if _USE_STREAMING:
+            split_key = _SPLIT_ALIASES.get(split, split)
+            try:
+                self._len = self.ds.info.splits[split_key].num_examples
+            except (TypeError, KeyError, AttributeError):
+                self._len = None
+            if split == "train":
+                self.ds = self.ds.shuffle(buffer_size=_SHUFFLE_BUFFER)
+
     def __len__(self):
+        if _USE_STREAMING:
+            if self._len is None:
+                raise TypeError("Streaming dataset size unknown (info.splits not available)")
+            return self._len
         return len(self.ds)
 
-    def __getitem__(self, idx):
-        row = self.ds[idx]
-
+    def _process_row(self, row):
         zoom_level = random.choice(_ZOOM_LEVELS_BY_SAT[self.overhead])
         if self.test_zoom_level is not None:
             zoom_level = self.test_zoom_level
@@ -122,3 +162,10 @@ class Dataset_soundscape(Dataset):
             "key": row["sample_id"],
             "sat_zoom_level": zoom_level,
         }
+
+    def __getitem__(self, idx):
+        return self._process_row(self.ds[idx])
+
+    def __iter__(self):
+        for row in self.ds:
+            yield self._process_row(row)

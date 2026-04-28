@@ -2,6 +2,7 @@
 # References:
 # MAE: https://github.com/facebookresearch/mae
 # --------------------------------------------------------
+import os
 from functools import partial
 
 import pytorch_lightning as pl
@@ -148,6 +149,9 @@ def vit_base_patch16_w_cls(**kwargs):
 
 
 def get_SatMAE_model(ckpt_path, device, global_pool=False, expr_type="main"):
+    if not os.path.isfile(ckpt_path):
+        from src.hub import resolve_hf_ckpt
+        ckpt_path = resolve_hf_ckpt("backbones/pretrain-vit-base-e199.pth")
 
     checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
     if expr_type == "main":

@@ -17,10 +17,10 @@ from src.config import ckpt_cfg, cfg
 def save_dict_to_json(dictionary, output_file):
     with open(output_file, 'a') as json_file:
         json.dump(dictionary, json_file)
-        json_file.write('\n')  # Add a newline character for better readability
+        json_file.write('\n')
 
 def l2normalize(batch_embeddings):
-    return batch_embeddings / (batch_embeddings.norm(p=2, dim=-1, keepdim=True) + 1e-8)
+    return batch_embeddings / batch_embeddings.norm(p=2, dim=-1, keepdim=True)
 
 def get_captions(lcdf, topkdf, test_zoom_level=1, idx=0):
     topkdf = topkdf.copy()
@@ -107,7 +107,7 @@ class Evaluate(object):
         model = sat2soundModel(Namespace(**hparams)).to(self.device)
         model.load_state_dict(pretrained_weights,strict=False)
         model = model.eval()
-        #set all requires grad to false
+
         for params in model.parameters():
             params.requires_grad=False
         
@@ -173,7 +173,7 @@ class Evaluate(object):
         retrieval_results_I2T, i2t_topkeys_df = get_retrieval(modality1_emb=l2normalize(sat_query_embeddings), modality2_emb=l2normalize(text_gallery_embeddings), normalized=True,k=R_k,keys=gt_keys,save_top=1)
         retrieval_results_T2I, _topkeys_df_t2i = get_retrieval(modality1_emb=l2normalize(text_query_embeddings), modality2_emb=l2normalize(sat_gallery_embeddings), normalized=True,k=R_k,keys=gt_keys,save_top=1)
         
-        lcdf = load_llava_caption_df(self.sat_type)
+        lcdf = load_llava_caption_df(self.sat_type, splits=(self.split,))
         outdf =  get_captions(lcdf=lcdf,topkdf=i2t_topkeys_df,test_zoom_level=self.test_zoom_level, idx=0)
 
         return retrieval_results_I2T, retrieval_results_T2I, R_k, outdf
@@ -205,17 +205,31 @@ if __name__ == '__main__':
     assert (len(args.expr) != 0) or (len(args.ckpt_path) != 0), \
         "Provide either --expr (key into ckpt_cfg) or --ckpt_path."
     
-    #params
+
     set_seed(56)
     
     ckpt_path = args.ckpt_path if args.ckpt_path else ckpt_cfg.get(args.expr)
     if not ckpt_path:
-        parser.error(
-            f"--ckpt_path not provided and --expr={args.expr!r} is not in ckpt_cfg. "
-            "Either pass --ckpt_path directly or populate ckpt_cfg in src/config.py."
-        )
+        from src.hub import load_ckpt_cfg, resolve_hf_ckpt
+        _hf_cfg = load_ckpt_cfg()
+        if args.expr in _hf_cfg:
+            ckpt_path = _hf_cfg[args.expr]
+        else:
+            # Last resort: look for a locally-trained run directory under cfg.log_dir.
+            _local_run_dir = os.path.join(cfg.log_dir, args.expr)
+            if os.path.isdir(_local_run_dir):
+                ckpt_path = _local_run_dir
+            else:
+                parser.error(
+                    f"--ckpt_path not provided and --expr={args.expr!r} not found in "
+                    f"ckpt_cfg, MVRL/sat2sound, or {_local_run_dir}. "
+                    "Pass --ckpt_path directly, populate ckpt_cfg in src/config.py, "
+                    "or train the run first so checkpoints appear under cfg.log_dir."
+                )
+    from src.hub import resolve_hf_ckpt
+    ckpt_path = resolve_hf_ckpt(ckpt_path)
    
-    #configure evaluation
+
     evaluation = Evaluate(split=args.split, ckpt_path=ckpt_path,device=device, 
                           recall_at = int(args.recall_at),caption_type=args.caption_type,
                           test_zoom_level=int(args.test_zoom_level), dataset_type=args.dataset_type,

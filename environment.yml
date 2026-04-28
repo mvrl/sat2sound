@@ -33,6 +33,7 @@ dependencies:
       - torchlibrosa
       - ruamel.yaml
       - yacs
-      - gradio==4.44.*
+      - gradio>=5.0,<6.0
       - folium==0.17.*
       - wandb
+      - -e .

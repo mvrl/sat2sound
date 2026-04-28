@@ -58,7 +58,7 @@ def get_args():
     parser = ArgumentParser(description='')
     parser.add_argument('--config', type=str, default=None,
                         help='Path to YAML config; values become defaults, CLI flags override.')
-    #training hparams
+
     parser.add_argument('--num_workers', type=int, default=16)
     parser.add_argument('--limit_val_batches', type=int, default=30)
     parser.add_argument('--val_check_interval', type=int, default=500)
@@ -115,7 +115,7 @@ def get_args():
 if __name__ == '__main__':
     set_seed(56)
     args = get_args()
-    #set learning rate logger
+
     print('Starting Training')
     print(args)
     if args.mode == "dev":
@@ -124,7 +124,7 @@ if __name__ == '__main__':
         args.accelerator = "cpu"
 
     sat2sound_model = sat2soundModel(args)
-    #initialize checkpoints and loggers
+
     lr_logger = LearningRateMonitor(logging_interval='step')
     wb_logger = WandbLogger(save_dir=cfg.log_dir,project=args.project_name, name=args.run_name, mode=args.wandb_mode)
     ckpt_monitor1 = ((

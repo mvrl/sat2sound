@@ -18,10 +18,10 @@ from src.metrics import get_retrieval_metrics, recall_key
 def save_dict_to_json(dictionary, output_file):
     with open(output_file, 'a') as json_file:
         json.dump(dictionary, json_file)
-        json_file.write('\n')  # Add a newline character for better readability
+        json_file.write('\n')
 
 def l2normalize(batch_embeddings):
-    return batch_embeddings / (batch_embeddings.norm(p=2, dim=-1, keepdim=True) + 1e-8)
+    return batch_embeddings / batch_embeddings.norm(p=2, dim=-1, keepdim=True)
 
     
 def set_seed(seed: int = 56) -> None:
@@ -83,7 +83,7 @@ class Evaluate(object):
         model = sat2soundModel(Namespace(**hparams)).to(self.device)
         model.load_state_dict(pretrained_weights,strict=False)
         model = model.eval()
-        #set all requires grad to false
+
         for params in model.parameters():
             params.requires_grad=False
         
@@ -200,20 +200,35 @@ if __name__ == '__main__':
     parser.add_argument('--expr', type=str, default='bingmap_withmeta') 
                                                                
     args = parser.parse_args()
-    #params
+
     set_seed(56)
 
     if args.ckpt_path:
         ckpt_path = args.ckpt_path
     elif args.expr in ckpt_cfg:
-        ckpt_path = ckpt_cfg[args.expr]
+        from src.hub import resolve_hf_ckpt
+        ckpt_path = resolve_hf_ckpt(ckpt_cfg[args.expr])
     else:
-        parser.error(
-            f"--ckpt_path not provided and --expr={args.expr!r} is not in ckpt_cfg. "
-            "Either pass --ckpt_path directly or populate ckpt_cfg in src/config.py."
-        )
+        from src.hub import load_ckpt_cfg, resolve_hf_ckpt
+        _hf_cfg = load_ckpt_cfg()
+        if args.expr in _hf_cfg:
+            ckpt_path = resolve_hf_ckpt(_hf_cfg[args.expr])
+        else:
+            # Last resort: look for a locally-trained run directory under cfg.log_dir.
+            # Training saves to <log_dir>/<run_name>/checkpoints/; evaluate.py's
+            # load_model() will auto-pick the best I2S_Recall checkpoint from there.
+            _local_run_dir = os.path.join(cfg.log_dir, args.expr)
+            if os.path.isdir(_local_run_dir):
+                ckpt_path = _local_run_dir
+            else:
+                parser.error(
+                    f"--ckpt_path not provided and --expr={args.expr!r} not found in "
+                    f"ckpt_cfg, MVRL/sat2sound, or {_local_run_dir}. "
+                    "Pass --ckpt_path directly, populate ckpt_cfg in src/config.py, "
+                    "or train the run first so checkpoints appear under cfg.log_dir."
+                )
    
-    #configure evaluation
+
     evaluation = Evaluate(split=args.split, ckpt_path=ckpt_path,device=device, 
                          recall_at = int(args.recall_at),
                           test_zoom_level=int(args.test_zoom_level), dataset_type=args.dataset_type, sat_type=args.sat_type, metadata_type=args.metadata_type,expr=args.expr)

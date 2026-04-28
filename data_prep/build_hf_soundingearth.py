@@ -1,61 +1,5 @@
-"""Build the SoundingEarth HuggingFace dataset from the on-disk file layout.
-
-Companion to :mod:`data_prep.build_hf_geosound` — produces a standalone HF
-dataset for SoundingEarth (Heidler et al. 2023) as packaged for Sat2Sound.
-
-All precomputed artifacts are embedded directly in the dataset:
-
-* Aporee-only audio (same recordings as the Aporee subset of GeoSound; the
-  ``aporee-<longkey>`` ``sample_id`` convention is shared so the MGACLAP mel
-  cache, computed over GeoSound, covers SoundingEarth automatically)
-* GoogleEarth satellite imagery (1024 × 1024)
-* Audio captions from GeoSound's CLAP-score winner lookup
-* LLaVA soundscape captions (zoom level 1 for GoogleEarth)
-* Precomputed MGACLAP mel spectrogram stacks (5 × 10-second segments)
-
-Column-selective loading is supported (geoparquet style):
-
-    from datasets import load_dataset
-    ds = load_dataset("mvrl/SoundingEarth", split="test",
-                      columns=["sample_id", "audio", "latitude", "longitude"])
-
-Prerequisites
--------------
-Before running this builder, the following must be precomputed locally:
-
-* **Mel features** — run ``data_prep/audio_feats_mgaclap.py`` on the GeoSound
-  dataset (SoundingEarth is a subset of GeoSound's Aporee audio, so the same
-  cache covers both). Mel stacks live under
-  ``<mel_dir>/aporee/<sample_id>.pth``.
-* **LLaVA captions** — run ``data_prep/generate_llava_caption_SoundingEarth.py``
-  with ``--overhead googleEarth --zoom_level 1`` to produce
-  ``SoundingEarth_llava_caption_for_googleEarth_zl_1.json`` under
-  ``<metafiles_path>/SoundingEarth/``.
-
-Row schema
-----------
-``sample_id, short_id, audio, googleearth_image,
-audio_caption, audio_caption_source,
-mel_features, llava_caption_googleearth_zl1,
-latitude, longitude, date_recorded``
-
-Examples
---------
-Dry-run 500 samples per split::
-
-    python -m data_prep.build_hf_soundingearth --out_dir /tmp/se-tiny --n 500
-
-Full build + push::
-
-    python -m data_prep.build_hf_soundingearth \\
-        --out_dir /tmp/soundingearth --push mvrl/SoundingEarth
-
-Shard sizing
-------------
-Shards are sized by ``--max_shard_size`` (default ``"2GB"``). Keep this
-well under HF Hub's ~20 GB soft / 50 GB hard per-file limit. Small splits
-(val/test) naturally collapse to a single shard if they fit under the cap.
-"""
+"""Build the SoundingEarth HF dataset; prerequisites: ``audio_feats_mgaclap.py`` and
+``generate_llava_caption_SoundingEarth.py``. See ``--help`` for schema and CLI options."""
 
 import json
 import os
@@ -341,7 +285,7 @@ def main():
     parser = ArgumentParser(description="Build the SoundingEarth HF dataset.")
     parser.add_argument("--out_dir", required=True)
     parser.add_argument("--n", type=int, default=None, help="Per-split row limit (dry-run).")
-    parser.add_argument("--push", default=None, help="HF repo_id to push to (e.g. mvrl/SoundingEarth).")
+    parser.add_argument("--push", default=None, help="HF repo_id to push to (e.g. MVRL/SoundingEarth).")
     parser.add_argument("--splits", nargs="+", default=["train", "val", "test"])
     parser.add_argument(
         "--mel_dir",

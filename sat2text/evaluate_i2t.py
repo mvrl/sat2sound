@@ -1,4 +1,4 @@
-##local imports
+
 import json
 import os
 import random
@@ -22,27 +22,27 @@ def save_dict_to_json(dictionary, output_file):
         json_file.write('\n')  # Add a newline character for better readability
 
 def l2normalize(batch_embeddings):
-    return batch_embeddings / (batch_embeddings.norm(p=2, dim=-1, keepdim=True) + 1e-8)
+    return batch_embeddings / batch_embeddings.norm(p=2, dim=-1, keepdim=True)
 
 def get_captions(lcdf, topkdf, test_zoom_level=1, idx=0):
     topkdf = topkdf.copy()
     topkdf['top1_key'] = topkdf['top_keys'].apply(lambda x: x[idx])
 
-    # Merge lcdf with topkdf for both ground truth (gt) and predicted (top1) keys
-    # We need to merge on 'sample_id' to retrieve the captions for both ground truth and predicted keys
+
+
     gt_df = pd.merge(topkdf[['key', 'top1_key']], lcdf[['sample_id', 'captions']], 
                      left_on='key', right_on='sample_id', how='left')
 
     pred_df = pd.merge(topkdf[['key', 'top1_key']], lcdf[['sample_id', 'captions']], 
                        left_on='top1_key', right_on='sample_id', how='left')
 
-    # Extract the relevant 'text' field for ground truth and predicted captions
+
     gt_df['gt_caption'] = gt_df['captions'].apply(
         lambda x: x.get('text' + str(test_zoom_level), x.get('text1', '')) if isinstance(x, dict) else '')
     pred_df['top1_caption'] = pred_df['captions'].apply(
         lambda x: x.get('text' + str(test_zoom_level), x.get('text1', '')) if isinstance(x, dict) else '')
 
-    # Construct the final DataFrame
+
     outdf = pd.DataFrame({
         'key': gt_df['key'],
         'top1key': gt_df['top1_key'],
@@ -80,7 +80,7 @@ class Evaluate(object):
         self.dataloader = self.get_dataloader()
     
     def load_model(self):
-        #load geoclap model from checkpoint
+
         pretrained_ckpt = torch.load(self.ckpt_path, map_location=self.device, weights_only=False)
         hparams = pretrained_ckpt['hyper_parameters']
         assert (hparams['dataset_type'] == self.dataset_type) and  (hparams['sat_type'] == self.sat_type)#just a safety check to ensure usage of right checkpoint
@@ -89,7 +89,7 @@ class Evaluate(object):
         model = sat2textModel(Namespace(**hparams)).to(self.device)
         model.load_state_dict(pretrained_weights,strict=False)
         model = model.eval()
-        #set all requires grad to false
+
         for params in model.parameters():
             params.requires_grad=False
         
@@ -146,13 +146,13 @@ class Evaluate(object):
         retrieval_results_I2T, i2t_topkeys_df = get_retrieval(modality1_emb=l2normalize(sat_query_embeddings), modality2_emb=l2normalize(text_gallery_embeddings), normalized=True,k=R_k,keys=gt_keys,save_top=1)
         retrieval_results_T2I, _topkeys_df_t2i = get_retrieval(modality1_emb=l2normalize(text_query_embeddings), modality2_emb=l2normalize(sat_gallery_embeddings), normalized=True,k=R_k,keys=gt_keys,save_top=1)
         
-        lcdf = load_llava_caption_df(self.sat_type)
+        lcdf = load_llava_caption_df(self.sat_type, splits=(self.split,))
         outdf =  get_captions(lcdf=lcdf,topkdf=i2t_topkeys_df,test_zoom_level=self.test_zoom_level, idx=0)
 
         return retrieval_results_I2T, retrieval_results_T2I, R_k, outdf
 
 
-#GeoSound_infonce_sentinel
+
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     parser = ArgumentParser(description='', formatter_class=RawTextHelpFormatter)
@@ -170,20 +170,29 @@ if __name__ == '__main__':
                                                                
     args = parser.parse_args()
     if not args.ckpt_path and args.expr not in ckpt_cfg:
-        parser.error(
-            f"--ckpt_path not provided and --expr={args.expr!r} is not in ckpt_cfg. "
-            "Either pass --ckpt_path directly or populate ckpt_cfg in src/config.py."
-        )
+        from src.hub import load_ckpt_cfg as _load_ckpt_cfg
+        _hf_cfg = _load_ckpt_cfg()
+        if args.expr not in _hf_cfg:
+            _local_run_dir = os.path.join(cfg.log_dir, args.expr)
+            if not os.path.isdir(_local_run_dir):
+                parser.error(
+                    f"--ckpt_path not provided and --expr={args.expr!r} not found in "
+                    f"ckpt_cfg, MVRL/sat2sound, or {_local_run_dir}. "
+                    "Pass --ckpt_path directly, populate ckpt_cfg in src/config.py, "
+                    "or train the run first so checkpoints appear under cfg.log_dir."
+                )
     
-    #params
+
     set_seed(56)
     if args.ckpt_path != '':
         ckpt_path = args.ckpt_path
     else:
-        #GeoSound_pcmepp_metadata_sentinel
-        ckpt_path = ckpt_cfg[args.expr]
+        _cfg = ckpt_cfg if args.expr in ckpt_cfg else _hf_cfg  # noqa: F821
+        ckpt_path = _cfg.get(args.expr) or os.path.join(cfg.log_dir, args.expr)
+    from src.hub import resolve_hf_ckpt
+    ckpt_path = resolve_hf_ckpt(ckpt_path)
    
-    #configure evaluation
+
     evaluation = Evaluate(split=args.split, ckpt_path=ckpt_path,device=device, 
                           recall_at = int(args.recall_at),
                           test_zoom_level=int(args.test_zoom_level), dataset_type=args.dataset_type, sat_type=args.sat_type)

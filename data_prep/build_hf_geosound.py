@@ -1,63 +1,5 @@
-"""Build the GeoSound HuggingFace dataset from the on-disk file layout.
-
-All precomputed artifacts are embedded directly in the dataset:
-
-* Raw 32 kHz audio
-* Bing Maps imagery (1500 × 1500) and Sentinel-2 imagery (1280 × 1280) at
-  original resolution
-* Audio captions (best of CLAP-scored Pengi / Qwen / metadata)
-* LLaVA soundscape captions at zoom levels 1, 3, 5 for both sat types
-* Precomputed MGACLAP mel spectrogram stacks (5 × 10-second segments)
-* Full geo / taxonomic / provenance metadata
-
-The dataset is stored as columnar Parquet (geoparquet style) so callers can
-select only the columns they need — imagery and mel are large but optional:
-
-    from datasets import load_dataset
-    ds = load_dataset("mvrl/GeoSound", split="train",
-                      columns=["sample_id", "audio", "latitude", "longitude"])
-
-Prerequisites
--------------
-Before running this builder, the following must be precomputed locally:
-
-* **Mel features** — run ``data_prep/audio_feats_mgaclap.py`` to produce the
-  5-segment MGACLAP mel stacks under ``<mel_dir>/<source>/<sample_id>.pth``.
-* **LLaVA captions** — run ``data_prep/generate_llava_caption_GeoSound.py``
-  (once with ``--overhead bingmap``, once with ``--overhead sentinel``) to
-  produce ``llava_caption_for_bingmap.json`` and
-  ``llava_caption_for_sentinel.json`` under ``<metafiles_path>/GeoSound/``.
-
-Row schema
-----------
-``sample_id, source, audio, bingmap_image, sentinel_image,
-audio_caption, audio_caption_source,
-mel_features,
-llava_caption_bingmap_zl1, llava_caption_bingmap_zl3, llava_caption_bingmap_zl5,
-llava_caption_sentinel_zl1, llava_caption_sentinel_zl3, llava_caption_sentinel_zl5,
-latitude, longitude, date,
-description, tags, title, scientific_name, common_name,
-sound_format, text, address, original_sampling_rate, bin_id``
-
-Examples
---------
-Dry-run 500 samples per split::
-
-    python -m data_prep.build_hf_geosound \\
-        --out_dir /tmp/geosound-tiny --n 500
-
-Full build + push (requires prior ``huggingface-cli login``)::
-
-    python -m data_prep.build_hf_geosound \\
-        --out_dir /tmp/geosound \\
-        --push mvrl/GeoSound --validate
-
-Shard sizing
-------------
-Shards are sized by ``--max_shard_size`` (default ``"2GB"``). Keep this
-well under HF Hub's ~20 GB soft / 50 GB hard per-file limit. Small splits
-(val/test) naturally collapse to a single shard if they fit under the cap.
-"""
+"""Build the GeoSound HF dataset; prerequisites: ``audio_feats_mgaclap.py`` and
+``generate_llava_caption_GeoSound.py``. See ``--help`` for schema and CLI options."""
 
 import json
 import os
@@ -370,7 +312,7 @@ def main():
     parser = ArgumentParser(description="Build the GeoSound HF dataset.")
     parser.add_argument("--out_dir", required=True, help="Local dir for DatasetDict.save_to_disk.")
     parser.add_argument("--n", type=int, default=None, help="Per-split row limit (dry-run).")
-    parser.add_argument("--push", default=None, help="HF repo_id to push to (e.g. mvrl/GeoSound).")
+    parser.add_argument("--push", default=None, help="HF repo_id to push to (e.g. MVRL/GeoSound).")
     parser.add_argument("--splits", nargs="+", default=["train", "val", "test"])
     parser.add_argument(
         "--mel_dir",

@@ -1,13 +1,4 @@
-"""Central configuration.
-
-All paths default to repository-local directories. Override any of them by:
-
-  1. Setting the corresponding environment variable (takes precedence), or
-  2. Editing this file for your local setup.
-
-Secrets (e.g. the Bing Maps API key) are loaded from files under ``.secrets/``
-and from environment variables — never hardcoded.
-"""
+"""Repo-wide paths and HF dataset/model IDs; all overridable via env vars."""
 
 import os
 
@@ -25,39 +16,22 @@ def _env_path(var_name: str, default: str) -> str:
     return default if os.path.isabs(default) else os.path.join(REPO_ROOT, default)
 
 
-def _load_bingmap_api_key() -> str:
-    """Load the Bing Maps key from ``BINGMAP_API_KEY`` env var or ``.secrets/bingmap_api.txt``.
-
-    Returns the empty string when neither is provided. Only scripts that actually
-    download satellite tiles need a key; training/evaluation does not.
-    """
-    env_key = os.environ.get("BINGMAP_API_KEY", "").strip()
-    if env_key:
-        return env_key
-    secret_path = os.path.join(REPO_ROOT, ".secrets", "bingmap_api.txt")
-    try:
-        with open(secret_path, "r") as fh:
-            return fh.read().strip()
-    except (OSError, FileNotFoundError):
-        return ""
-
-
 cfg = CN()
 
-cfg.bingmap_api = _load_bingmap_api_key()
-
-# ``SAT2SOUND_DATA_PATH`` is the root of the GeoSound dataset tree.
-# Setting it once cascades to all sub-paths that derive from the data root.
+# Data prep only; train/eval use HF dataset IDs directly.
 _GEOSOUND_ROOT = os.environ.get(
     "SAT2SOUND_DATA_PATH",
-    "/projects/bdbk/subashk/data/data_raw/GeoSound",
+    os.path.join(REPO_ROOT, "data", "GeoSound"),
 )
 
 cfg.data_path = _GEOSOUND_ROOT
 cfg.metafiles_path = _env_path(
     "SAT2SOUND_METAFILES_PATH", os.path.join(_GEOSOUND_ROOT, "metafiles")
 )
-cfg.satmae_ckpt_path = _env_path("SATMAE_CKPT_PATH", os.path.join("ckpts", "SATMAE", "pretrain-vit-base-e199.pth"))
+cfg.satmae_ckpt_path = _env_path(
+    "SATMAE_CKPT_PATH",
+    os.path.join("ckpts", "SATMAE", "pretrain-vit-base-e199.pth"),
+)
 
 cfg.log_dir = _env_path("SAT2SOUND_LOG_DIR", "logs")
 cfg.ignore_ids_geosound = _env_path(
@@ -70,7 +44,7 @@ cfg.valid_ids_SoundingEarth = _env_path(
 )
 cfg.mel_feats_path = os.environ.get(
     "SAT2SOUND_MEL_FEATS_PATH",
-    "/projects/bdbk/subashk/data/data_raw/GeoSound_audio_mel_feats",
+    os.path.join(REPO_ROOT, "data", "GeoSound_audio_mel_feats"),
 )
 cfg.mgaclap_yml_path = _env_path(
     "MGACLAP_YML_PATH",
@@ -83,15 +57,10 @@ cfg.mgaclap_ckpt_path = _env_path(
 
 cfg.results_json = _env_path("SAT2SOUND_RESULTS_JSON", os.path.join("logs", "Results_main.json"))
 
-# HuggingFace dataset identifiers. Override via env var to point at a fork /
-# private mirror.
-#
-# Both datasets are self-contained: they embed raw audio, satellite imagery
-# (all sources / original resolution), audio captions, LLaVA soundscape
-# captions (zoom-level specific), precomputed MGACLAP mel features, and full
-# metadata. Users select only the columns they need at load time.
+# HF dataset IDs — override to point at a fork.
 cfg.hf_geosound_id = os.environ.get("SAT2SOUND_HF_GEOSOUND_ID", "MVRL/GeoSound")
 cfg.hf_soundingearth_id = os.environ.get("SAT2SOUND_HF_SOUNDINGEARTH_ID", "MVRL/SoundingEarth")
+cfg.hf_sat2sound_ckpts_id = os.environ.get("SAT2SOUND_HF_CKPTS_ID", "MVRL/sat2sound")
 
 # Optional region-image downloads (used by map-based soundscape demos).
 cfg.usa_bing_images = _env_path(
@@ -112,7 +81,12 @@ cfg.usa_sentinel_csv = _env_path(
 )
 
 
-# ``ckpt_cfg`` is an optional map from experiment shorthand (e.g. ``bingmap_withmeta``)
-# to a trained checkpoint path. The public repo ships no checkpoints; users fill
-# this in locally or pass ``--ckpt_path`` directly to evaluate / demo scripts.
-ckpt_cfg = {}
+# expr → ckpt path; loaded from local ckpts/ckpt_cfg.json or lazily from HF.
+import json as _json
+
+_local_ckpt_cfg = os.path.join(REPO_ROOT, "ckpts", "ckpt_cfg.json")
+if os.path.isfile(_local_ckpt_cfg):
+    with open(_local_ckpt_cfg) as _fh:
+        ckpt_cfg: dict = _json.load(_fh)
+else:
+    ckpt_cfg: dict = {}

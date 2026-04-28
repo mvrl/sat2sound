@@ -1,5 +1,5 @@
-# Using LLAVA to generate sound-related captions for Bing Maps and Sentinel satellite imagery in the GeoSound dataset.
-# Refer to the ArgumentParser section of the code for details on the expected inputs and outputs.
+"""LLaVA soundscape captions for GeoSound bingmap/sentinel tiles; see --help for options."""
+
 import json
 import os
 import time
@@ -15,18 +15,7 @@ from transformers import AutoProcessor, LlavaForConditionalGeneration
 tile_size = {'sentinel':256, 'bingmap':300, 'googleEarth':256} 
 
 def central_crop_bbox(image_width, image_height, crop_width, crop_height):
-    """
-    Calculate the bounding box coordinates for the central crop of an image.
-
-    Args:
-    - image_width (int): Width of the original image.
-    - image_height (int): Height of the original image.
-    - crop_width (int): Width of the desired crop.
-    - crop_height (int): Height of the desired crop.
-
-    Returns:
-    - tuple: A tuple containing the bounding box coordinates in the format (left, upper, right, lower).
-    """
+    """Return (left, upper, right, lower) bbox for a centered crop."""
     left = (image_width - crop_width) // 2
     upper = (image_height - crop_height) // 2
     right = left + crop_width
@@ -46,12 +35,21 @@ def save_dict_to_json(dictionary, output_file):
         json_file.write('\n')  # Add a newline character for better readability
 
 if __name__ == '__main__':
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from src.config import cfg as _cfg
+
     parser = ArgumentParser(description='')
-    parser.add_argument('--overhead', type=str, default="sentinel",choices=["sentinel","bingmap"])
+    parser.add_argument('--overhead', type=str, default="sentinel", choices=["sentinel", "bingmap"])
+    parser.add_argument('--data_path', type=str, default=_cfg.data_path,
+                        help='Root of the GeoSound dataset (overrides SAT2SOUND_DATA_PATH).')
+    parser.add_argument('--metafiles_path', type=str,
+                        default=os.path.join(_cfg.data_path, "metafiles", "GeoSound"),
+                        help='Path to the GeoSound metafiles directory.')
     args = parser.parse_args()
 
-    data_path = "/projects/bdbk/subashk/data/data_raw/GeoSound/"
-    metafiles_geosound = "/projects/bdbk/subashk/data/data_raw/GeoSound/metafiles/GeoSound"
+    data_path = args.data_path
+    metafiles_geosound = args.metafiles_path
     train_df = pd.read_csv(os.path.join(metafiles_geosound, "train_metadata.csv"))
     val_df = pd.read_csv(os.path.join(metafiles_geosound, "val_metadata.csv"))
     test_df = pd.read_csv(os.path.join(metafiles_geosound, "test_metadata.csv"))
