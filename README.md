@@ -1,8 +1,37 @@
-# Sat2Sound
+# Sat2Sound: A Unified Framework for Zero-Shot Soundscape Mapping
 
-Trimodal (satellite image ↔ audio ↔ text) contrastive learning with a shared multimodal codebook.
+<p align="center">
+  <img src="framework.png" width="800"/>
+</p>
 
-<img src="framework.png" width="800"/>
+<p align="center">
+  <a href="https://arxiv.org/abs/2505.13777"><img src="https://img.shields.io/badge/arXiv-2505.13777-b31b1b.svg" alt="arXiv"/></a>
+  &nbsp;
+  <a href="https://arxiv.org/pdf/2505.13777"><img src="https://img.shields.io/badge/Paper-PDF-blue.svg" alt="Paper PDF"/></a>
+  &nbsp;
+  <a href="https://huggingface.co/MVRL/sat2sound"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Models-yellow" alt="HuggingFace Models"/></a>
+  &nbsp;
+  <a href="https://huggingface.co/datasets/MVRL/GeoSound"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20GeoSound-Dataset-orange" alt="GeoSound Dataset"/></a>
+  &nbsp;
+  <a href="https://huggingface.co/datasets/MVRL/SoundingEarth"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20SoundingEarth-Dataset-orange" alt="SoundingEarth Dataset"/></a>
+</p>
+
+<p align="center">
+  <a href="https://subash-khanal.github.io/">Subash Khanal</a>,
+  <a href="https://vishu26.github.io/">Srikumar Sastry</a>,
+  <a href="https://sites.wustl.edu/aayush/">Aayush Dhakal</a>,
+  <a href="https://adeelpu.github.io/">Adeel Ahmad</a>,
+  <a href="https://cs.slu.edu/~stylianou/">Abby Stylianou</a>,
+  <a href="https://jacobsn.github.io/">Nathan Jacobs</a>
+</p>
+
+<p align="center">
+  <b>EarthVision 2026</b> &nbsp;·&nbsp; IEEE/ISPRS Workshop on Large Scale Computer Vision for Remote Sensing
+</p>
+
+---
+
+Sat2Sound is a trimodal (satellite image ↔ audio ↔ text) contrastive learning framework with a shared multimodal codebook. It learns a joint embedding space that enables zero-shot soundscape mapping — predicting what a location sounds like directly from satellite imagery, with optional metadata such as location and time.
 
 ## Install
 
@@ -13,7 +42,7 @@ conda activate sat2sound
 
 ## Datasets
 
-| | Contents |
+|  | Contents |
 |---|---|
 | [`MVRL/GeoSound`](https://huggingface.co/datasets/MVRL/GeoSound) | Bing + Sentinel imagery, audio, precomputed mel features, LLaVA captions, metadata |
 | [`MVRL/SoundingEarth`](https://huggingface.co/datasets/MVRL/SoundingEarth) | GoogleEarth imagery, audio, precomputed mel features, LLaVA captions, metadata |
@@ -25,7 +54,7 @@ Raw 32 kHz `audio` is included in both datasets. Training and evaluation use pre
 Streams data from HuggingFace — no download needed. Checkpoints auto-download from [`MVRL/sat2sound`](https://huggingface.co/MVRL/sat2sound).
 
 ```bash
-bash eval_main.sh                    # image-to-audio retrieval, all 6 models                              
+bash eval_main.sh                    # image-to-audio retrieval, all 6 models
 bash eval_main.sh bingmap_withmeta   # single evaluation
 
 bash eval_i2t.sh                     # image-to-text retrieval, all 3 models
@@ -41,8 +70,8 @@ python scripts/download_for_training.py   # downloads datasets + backbone weight
 ```
 
 ```bash
-python -m src.train --config configs/sat2sound/bingmap_withmeta.yaml # single experiment
-bash launch_exprs.sh   # all 6 sat2sound models + sat2text baseline
+python -m src.train --config configs/sat2sound/bingmap_withmeta.yaml   # single experiment
+bash launch_exprs.sh                                                     # all 6 models + sat2text baseline
 ```
 
 Training configs: `configs/sat2sound/` (6 experiments) and `configs/sat2text/`.
@@ -110,10 +139,6 @@ All checkpoints and backbone weights live at [`MVRL/sat2sound`](https://huggingf
 | `demo/GeoSound_gallery_w_bingmap.h5` | Retrieval demo gallery |
 
 ## Citation
-
-Accepted at **EarthVision 2026** (IEEE/ISPRS Workshop on Large Scale Computer Vision for Remote Sensing).
-
-- Paper: [arxiv.org/pdf/2505.13777](https://arxiv.org/pdf/2505.13777)
 
 ```bibtex
 @inproceedings{khanal2026sat2sound,
