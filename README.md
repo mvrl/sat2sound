@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://mvrl.github.io/sat2sound/"><img src="https://img.shields.io/badge/Project-Page-green.svg" alt="Project Page"/></a>
+  <a href="https://subash-khanal.github.io/sat2sound/"><img src="https://img.shields.io/badge/Project-Page-green.svg" alt="Project Page"/></a>
   &nbsp;
   <a href="https://arxiv.org/abs/2505.13777"><img src="https://img.shields.io/badge/arXiv-2505.13777-b31b1b.svg" alt="arXiv"/></a>
   &nbsp;
