@@ -81,13 +81,18 @@ Training configs: `configs/sat2sound/` (6 experiments) and `configs/sat2text/`.
 ```python
 import torch
 import torchaudio
+from PIL import Image
 from src.engine import l2normalize
-from utilities.utils import load_sat2sound, encode_text, encode_gps_time, load_audio_mel, prepare_batch
+from utilities.utils import load_sat2sound, encode_text, encode_gps_time, load_audio_mel, load_sat_image, prepare_batch
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 B = 4
 
 model, tokenizer = load_sat2sound("bingmap_withmeta", device)
+
+# satellite tile — swap with load_sat_image("/path/to/tile.jpg", device, B=B) for a real image.
+# load_sat_image handles ImageNet normalization internally.
+sat = load_sat_image(Image.new("RGB", (300, 300), color=(127, 127, 127)), device, B=B)  # (B, 3, 224, 224)
 
 # audio — swap the next two lines to use a real recording instead of white noise
 torchaudio.save("/tmp/demo.wav", torch.randn(1, 320_000), sample_rate=32_000)
@@ -96,7 +101,7 @@ mel = load_audio_mel("/tmp/demo.wav", device)                  # (1, 1001, 64)
 latlong, time_enc, month_enc = encode_gps_time(37.77, -122.42, hour=13, month=5, B=B, device=device)
 
 batch = prepare_batch(
-    sat           = torch.randn(B, 3, 224, 224, device=device),  # ImageNet-normalised satellite tile
+    sat           = sat,
     audio_mel     = mel,
     audio_caption = encode_text(["Traffic noise and distant birds."] * B, tokenizer, device),
     image_caption = encode_text(["From the aerial view of the location captured in the image, we can expect to hear car horns and people talking."] * B, tokenizer, device),

@@ -81,6 +81,58 @@ def get_image(image_path, zoom_level=1, sat_type="bingmap"):
 # ---------------------------------------------------------------------------
 
 
+def load_sat_image(image, device=None, B: int = 1):
+    """Load and ImageNet-normalize a satellite tile for the model.
+
+    Handles the ImageNet preprocessing internally so callers don't need to
+    replicate it. The image is converted to RGB, center-cropped to a square,
+    resized to 224×224 (bicubic), converted to a float tensor, and normalized
+    with the ImageNet mean/std used during training.
+
+    Args:
+        image: One of — a path to an image file (``str`` or ``pathlib.Path``),
+            a ``PIL.Image.Image``, or an ``(H, W, 3)`` ``numpy.ndarray``
+            (uint8 RGB).
+        device: Target device (``None`` → auto-select CUDA when available).
+        B: Batch size. The processed tile is tiled along dim 0 so the result
+            can be dropped straight into :func:`prepare_batch`.
+
+    Returns:
+        Tensor of shape ``(B, 3, 224, 224)`` on *device*, ImageNet-normalized.
+
+    Example:
+
+        >>> sat = load_sat_image("/path/to/tile.jpg", device, B=4)
+    """
+    from pathlib import Path
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if isinstance(image, (str, Path)):
+        image = Image.open(image)
+    elif isinstance(image, np.ndarray):
+        image = Image.fromarray(image)
+    if not isinstance(image, Image.Image):
+        raise TypeError(
+            "image must be a path, a PIL.Image, or a numpy.ndarray; "
+            f"got {type(image).__name__}"
+        )
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+
+    t = transforms.Compose([
+        transforms.CenterCrop(min(image.size)),
+        transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
+        transforms.ToTensor(),
+        transforms.Normalize(_IMAGENET_MEAN, _IMAGENET_STD),
+    ])
+    tile = t(image).unsqueeze(0).to(device)
+    if B != 1:
+        tile = tile.repeat(B, 1, 1, 1)
+    return tile
+
+
 def load_audio_mel(path: str, device=None):
     """Load an audio file and return its MGACLAP mel-spectrogram features.
 
