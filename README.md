@@ -11,6 +11,8 @@
   &nbsp;
   <a href="https://arxiv.org/pdf/2505.13777"><img src="https://img.shields.io/badge/Paper-PDF-blue.svg" alt="Paper PDF"/></a>
   &nbsp;
+  <a href="docs/Sat2Sound_poster.pdf"><img src="https://img.shields.io/badge/Poster-PDF-purple.svg" alt="Poster"/></a>
+  &nbsp;
   <a href="https://huggingface.co/MVRL/sat2sound"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Models-yellow" alt="HuggingFace Models"/></a>
   &nbsp;
   <a href="https://huggingface.co/datasets/MVRL/GeoSound"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20GeoSound-Dataset-orange" alt="GeoSound Dataset"/></a>
